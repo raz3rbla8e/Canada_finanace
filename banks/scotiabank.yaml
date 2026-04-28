@@ -1,0 +1,30 @@
+# Scotiabank Online Banking
+name: "Scotiabank"
+version: 1
+last_verified: "2026-04"
+account_label: "Scotiabank"
+encoding: "utf-8-sig"
+
+detection:
+  header_starts_with: "date,"
+  header_contains:
+    - "description"
+    - "amount"
+  header_excludes:
+    - "withdrawal"
+
+columns:
+  date: "Date"
+  description: "Description"
+  amount: "Amount"
+
+# Alternate column names (some Scotiabank exports differ)
+description_alt: "Payee"
+amount_alt: "Transactions"
+
+date_formats:
+  - "%m/%d/%Y"
+  - "%Y-%m-%d"
+  - "%m-%d-%Y"
+
+amount_sign: "standard"  # negative = debit/expense, positive = credit/income

@@ -1,0 +1,26 @@
+# Tangerine Chequing (Debit Account)
+name: "Tangerine (Chequing)"
+version: 1
+last_verified: "2026-04"
+account_label: "Tangerine Chequing"
+encoding: "utf-8-sig"
+
+detection:
+  header_starts_with: "date,"
+  header_contains:
+    - "transaction"
+    - "name"
+    - "memo"
+
+columns:
+  date: "Date"
+  description: "Name"
+  amount: "Amount"
+  memo: "Memo"
+
+date_formats:
+  - "%m/%d/%Y"
+  - "%Y-%m-%d"
+  - "%m-%d-%Y"
+
+amount_sign: "standard"  # negative = debit/expense, positive = credit/income

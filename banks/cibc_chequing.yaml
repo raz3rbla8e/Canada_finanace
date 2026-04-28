@@ -1,0 +1,25 @@
+# CIBC Online Banking
+name: "CIBC (Chequing)"
+version: 1
+last_verified: "2026-04"
+account_label: "CIBC Chequing"
+encoding: "utf-8-sig"
+
+detection:
+  header_starts_with: "transaction date,"
+  header_contains:
+    - "withdrawals"
+
+columns:
+  date: "Transaction Date"
+  description: "Description"
+  debit: "Withdrawals"
+  credit: "Deposits"
+
+# Flexible column matching — keys are matched case-insensitively
+flexible_columns: true
+
+date_formats:
+  - "%m/%d/%Y"
+  - "%Y-%m-%d"
+  - "%m-%d-%Y"

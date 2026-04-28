@@ -1,0 +1,26 @@
+# TD Canada Trust EasyWeb Chequing
+name: "TD Canada Trust (Chequing)"
+version: 1
+last_verified: "2026-04"
+account_label: "TD Chequing"
+encoding: "utf-8-sig"
+
+detection:
+  header_contains:
+    - "deposits"
+  header_contains_any:
+    - "withdrawals ($)"
+    - "total balance"
+
+columns:
+  date: "Date"
+  description: "Description"
+  debit: "Withdrawals ($)"
+  credit: "Deposits ($)"
+
+# Flexible column matching — keys are matched case-insensitively with contains logic
+flexible_columns: true
+
+date_formats:
+  - "%m/%d/%Y"
+  - "%Y-%m-%d"

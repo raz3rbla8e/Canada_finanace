@@ -1,0 +1,26 @@
+# Tangerine Credit Card
+name: "Tangerine (Credit Card)"
+version: 1
+last_verified: "2026-04"
+account_label: "Tangerine Credit Card"
+encoding: "utf-8-sig"
+
+detection:
+  header_starts_with: "transaction date,"
+  header_contains:
+    - "name"
+    - "memo"
+
+columns:
+  date: "Transaction date"
+  description: "Name"
+  amount: "Amount"
+
+date_formats:
+  - "%m/%d/%Y"
+  - "%Y-%m-%d"
+  - "%m-%d-%Y"
+
+amount_sign: "standard"  # negative = purchase/expense, positive = refund/income
+
+credit_default_category: "Refund"  # default income category for credit card refunds

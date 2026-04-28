@@ -1,0 +1,28 @@
+# Wealthsimple Cash / Chequing
+name: "Wealthsimple"
+version: 1
+last_verified: "2026-04"
+account_label: "Wealthsimple {account_type}"
+encoding: "utf-8-sig"
+
+detection:
+  header_contains:
+    - "transaction_date"
+    - "net_cash_amount"
+
+columns:
+  date: "transaction_date"
+  description: "description"
+  amount: "net_cash_amount"
+  account_type: "account_type"
+
+# Fallback description fields when description is empty
+description_fallback:
+  - "activity_sub_type"
+  - "activity_type"
+
+date_formats:
+  - "%Y-%m-%d"
+  - "%m/%d/%Y"
+
+amount_sign: "standard"  # negative = debit/expense, positive = credit/income

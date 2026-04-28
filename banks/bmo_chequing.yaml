@@ -1,0 +1,29 @@
+# BMO Bank of Montreal Online Banking
+name: "BMO (Chequing)"
+version: 1
+last_verified: "2026-04"
+account_label: "BMO Chequing"
+encoding: "utf-8-sig"
+
+detection:
+  header_starts_with: "date,"
+  header_contains:
+    - "withdrawals"
+    - "deposits"
+
+columns:
+  date: "Date"
+  description: "Description"
+  debit: "Withdrawals"
+  credit: "Deposits"
+
+# Alternate column names
+description_alt: "Payee"
+
+# Flexible column matching — keys are matched case-insensitively
+flexible_columns: true
+
+date_formats:
+  - "%m/%d/%Y"
+  - "%Y-%m-%d"
+  - "%m-%d-%Y"

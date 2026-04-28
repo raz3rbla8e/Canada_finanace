@@ -1,0 +1,24 @@
+# RBC Royal Bank Online Banking
+name: "RBC (Chequing)"
+version: 1
+last_verified: "2026-04"
+account_label: "RBC Chequing"
+encoding: "utf-8-sig"
+
+detection:
+  header_starts_with: "date,"
+  header_contains:
+    - "debit"
+    - "credit"
+    - "transaction"
+
+columns:
+  date: "Date"
+  description: "Description"
+  debit: "Debit"
+  credit: "Credit"
+
+date_formats:
+  - "%m/%d/%Y"
+  - "%Y-%m-%d"
+  - "%m-%d-%Y"

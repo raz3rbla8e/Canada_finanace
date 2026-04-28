@@ -1,0 +1,31 @@
+# National Bank of Canada (Bilingual CSV)
+name: "National Bank"
+version: 1
+last_verified: "2026-04"
+account_label: "National Bank"
+encoding: "utf-8-sig"
+
+detection:
+  header_contains_any:
+    - "date de transaction"
+    - "débit"
+
+columns:
+  date: "Date"
+  description: "Description"
+  debit: "Débit"
+  credit: "Crédit"
+
+# Alternate column names (English variants)
+date_alt: "Date de transaction"
+description_alt: "Libellé"
+debit_alt: "Debit"
+credit_alt: "Credit"
+
+# Flexible column matching — keys are matched case-insensitively
+flexible_columns: true
+
+date_formats:
+  - "%Y-%m-%d"
+  - "%m/%d/%Y"
+  - "%d/%m/%Y"
