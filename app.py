@@ -131,17 +131,21 @@ CATEGORY_RULES = {
         "claude.ai","anthropic","netflix","spotify","apple.com/bill","google one",
         "microsoft 365","adobe","notion","chatgpt","openai","dropbox","icloud",
         "youtube premium","duolingo","amazon prime","prime video",
+        "crunchyroll","paramount+","canva","github","hbo max","nord vpn",
+        "expressvpn","audible","kindle unlimited","apple tv",
     ],
     "Fuel": [
         "shell","esso","petro-canada","petro canada","ultramar","pioneer","irving",
         "suncor","husky","pronto","gas station","circle k","couche tard",
-        "shefield","sheffield","7-eleven fuel","costco gas",
+        "shefield","sheffield","7-eleven fuel","costco gas","mobil ",
+        "on the run","super save gas","co-op gas","canadian tire gas",
     ],
     "Groceries": [
         "loblaws","no frills","sobeys","metro","food basics","freshco","farm boy",
         "whole foods","costco wholesale","superstore","real canadian","t&t","maxi",
         "provigo","iga","safeway","save on food","independent","freshmart",
         "grocery","supermarche","epicerie","wmt suprctr","wal-mart","walmart",
+        "voila","instacart","pc express","flashfood",
     ],
     "Pharmacy": [
         "shoppers drug","rexall","pharmasave","jean coutu","uniprix","proxim",
@@ -149,8 +153,9 @@ CATEGORY_RULES = {
     ],
     "Healthcare": [
         "physio","dentist","dental","doctor","clinic","optometrist","medical",
-        "hospital","lab","diagnosis","diagnostics","planet fitness","goodlife",
+        "hospital","diagnosis","diagnostics","planet fitness","goodlife",
         "anytime fitness","gym","yoga","pilates","abc*planet","massage","therapy",
+        "lifelab","chiropract","walk-in","dermatol",
     ],
     "Phone": [
         "fido","koodo","public mobile","lucky mobile","virgin mobile",
@@ -158,20 +163,23 @@ CATEGORY_RULES = {
     ],
     "Internet": [
         "bell internet","rogers internet","videotron","shaw","eastlink","cogeco",
-        "teksavvy","distributel",
+        "teksavvy","distributel","start.ca","vmedia",
     ],
     "Utilities": [
         "hydro ottawa","hydro one","bc hydro","enbridge","union gas",
-        "atco gas","fortis","electric","water bill","toronto hydro",
+        "atco gas","fortis","water bill","toronto hydro","alectra",
+        "nova scotia power","manitoba hydro","saskpower","epcor",
     ],
     "Clothing": [
         "winners","marshalls","sport chek","atmosphere","nike","adidas",
-        "h&m","zara","uniqlo","old navy","gap","aritzia","lululemon",
+        "h&m","zara","uniqlo","old navy","aritzia","lululemon",
         "simons","the bay","hudson's bay","nordstrom","reitmans","ssense","roots",
+        "gap #","gap factory","mark's","marks work",
     ],
     "Home": [
         "ikea","canadian tire","home depot","rona","home hardware",
         "wayfair","structube","article","restoration hardware","pottery barn",
+        "kitchen stuff","bed bath","linen chest",
     ],
     "Insurance": [
         "insurance","intact","aviva","state farm","belairdirect","wawanesa",
@@ -180,7 +188,7 @@ CATEGORY_RULES = {
     "Travel": [
         "airbnb","hotel","expedia","booking.com","air canada","westjet","porter",
         "swoop","flair","vrbo","marriott","hilton","delta hotel","best western",
-        "kayak","hostel","motel","resort","via rail",
+        "kayak","hostel","motel","resort","via rail","sunwing",
     ],
     "Education": [
         "carleton","university","college","textbook","udemy","coursera",
@@ -198,6 +206,7 @@ CATEGORY_RULES = {
         "uber","lyft","oc transpo","ttc","stm","translink","presto","parking",
         "taxi","transit","impark","indigo park","greyhound","flixbus","train",
         "enterprise rent","budget rent","hertz","avis","zipcar",
+        "communauto","turo","go transit",
     ],
     "Eating Out": [
         "mcdonald","tim horton","subway","starbucks","uber eat","skip the dishes",
@@ -208,27 +217,34 @@ CATEGORY_RULES = {
         "papa john","little caesar","pizza pizza","pizza hut","hero burger",
         "mucho burrito","shawarma","falafel","osmow","6ixty wing","happy lamb",
         "burrito","chick-fil","dairy queen","d spot","vietnamese","restaurant",
-        "cafe","coffee","bakery","diner","bar","pub","grill","kitchen","bistro",
-        "eatery","food court","hot pot","wing","ramen","poke","bubble tea",
+        "cafe","coffee","bakery","diner","grill","bistro",
+        "eatery","food court","hot pot","wings","ramen","poke","bubble tea",
         "moxie","denny","ihop","east side mario","the keg","joey","menchie",
+        "booster juice","second cup","new york fries","panago","extreme pita",
+        "wild wing","st louis","scores","baton rouge","mr sub","country style",
+        "la belle province","cora breakfast","fatburger","smokes poutine",
     ],
     "Shopping": [
         "amazon","target","ebay","etsy","aliexpress","shein","best buy",
         "staples","the source","indigo","chapters","paypal","shopify",
         "dollarama","dollar tree","giant tiger","tanger outlet","rfbt",
         "homesense","apple store","samsung","microsoft store","dell",
+        "value village","goodwill","sport check",
     ],
     "Misc": [
         "detail my ride","car wash","car detail","auto detail","dry clean",
         "laundromat","post office","fedex","ups","purolator","canada post",
+        "storage","moving",
     ],
 }
 
 def categorize(name: str, learned: dict = None) -> str:
     n = name.lower().strip()
-    # Hard overrides first
+    # Hard overrides — check multi-word matches before single-word rules
     if "costco gas" in n:
         return "Fuel"
+    if "uber eat" in n or "ubereats" in n:
+        return "Eating Out"
     # User-learned merchants (highest priority)
     if learned:
         for keyword, cat in learned.items():
