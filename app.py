@@ -76,9 +76,40 @@ def init_db():
                 key         TEXT PRIMARY KEY,
                 value       TEXT NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS categories (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                name        TEXT NOT NULL UNIQUE,
+                type        TEXT NOT NULL CHECK(type IN ('Income','Expense')),
+                icon        TEXT DEFAULT '',
+                user_created INTEGER DEFAULT 0,
+                sort_order  INTEGER DEFAULT 0
+            );
         """)
         # Default settings
         db.execute("INSERT OR IGNORE INTO settings (key,value) VALUES ('theme','dark')")
+        # Seed default categories (only if table is empty)
+        existing = db.execute("SELECT COUNT(*) as c FROM categories").fetchone()[0]
+        if existing == 0:
+            expense_cats = [
+                ("Eating Out", "🍔"), ("Groceries", "🛒"), ("Fuel", "⛽"),
+                ("Transport", "🚌"), ("Entertainment", "🎬"), ("Subscriptions", "📱"),
+                ("Healthcare", "🏥"), ("Pharmacy", "💊"), ("Clothing", "👕"),
+                ("Shopping", "🛍️"), ("Home", "🏠"), ("Insurance", "🛡️"),
+                ("Travel", "✈️"), ("Education", "📚"), ("Phone", "📞"),
+                ("Internet", "🌐"), ("Utilities", "💡"), ("Car Payment", "🚗"),
+                ("Rent", "🏘️"), ("Savings Transfer", "💰"), ("Misc", "📦"),
+            ]
+            income_cats = [
+                ("Job", "💼"), ("Freelance", "💻"), ("Bonus", "🎉"),
+                ("Refund", "↩️"), ("Other Income", "💵"),
+            ]
+            for i, (name, icon) in enumerate(expense_cats):
+                db.execute("INSERT INTO categories (name, type, icon, user_created, sort_order) VALUES (?,?,?,0,?)",
+                           (name, "Expense", icon, i))
+            for i, (name, icon) in enumerate(income_cats):
+                db.execute("INSERT INTO categories (name, type, icon, user_created, sort_order) VALUES (?,?,?,0,?)",
+                           (name, "Income", icon, i))
         db.commit()
 
 def tx_hash(date_str, name, amount, account):
@@ -816,6 +847,77 @@ def api_settings_set():
     db.commit()
     return jsonify({"ok": True})
 
+@app.route("/api/categories")
+def api_categories_get():
+    db = get_db()
+    rows = db.execute("SELECT id, name, type, icon, user_created, sort_order FROM categories ORDER BY type, sort_order").fetchall()
+    return jsonify([dict(r) for r in rows])
+
+@app.route("/api/categories", methods=["POST"])
+def api_categories_add():
+    d = request.json
+    name = d.get("name", "").strip()
+    cat_type = d.get("type", "Expense")
+    icon = d.get("icon", "").strip()
+    if not name:
+        return jsonify({"error": "Category name is required"}), 400
+    if cat_type not in ("Income", "Expense"):
+        return jsonify({"error": "Type must be Income or Expense"}), 400
+    db = get_db()
+    # Get next sort order
+    max_order = db.execute("SELECT COALESCE(MAX(sort_order),0) FROM categories WHERE type=?", (cat_type,)).fetchone()[0]
+    try:
+        db.execute("INSERT INTO categories (name, type, icon, user_created, sort_order) VALUES (?,?,?,1,?)",
+                   (name, cat_type, icon, max_order + 1))
+        db.commit()
+        return jsonify({"ok": True})
+    except sqlite3.IntegrityError:
+        return jsonify({"error": "Category already exists"}), 409
+
+@app.route("/api/categories/<int:cat_id>", methods=["PATCH"])
+def api_categories_update(cat_id):
+    d = request.json
+    db = get_db()
+    cat = db.execute("SELECT * FROM categories WHERE id=?", (cat_id,)).fetchone()
+    if not cat:
+        return jsonify({"error": "Category not found"}), 404
+    old_name = cat["name"]
+    new_name = d.get("name", old_name).strip()
+    new_icon = d.get("icon", cat["icon"]).strip()
+    if not new_name:
+        return jsonify({"error": "Category name is required"}), 400
+    try:
+        db.execute("UPDATE categories SET name=?, icon=? WHERE id=?", (new_name, new_icon, cat_id))
+        # Rename in transactions, learned_merchants, and budgets if name changed
+        if new_name != old_name:
+            db.execute("UPDATE transactions SET category=? WHERE category=?", (new_name, old_name))
+            db.execute("UPDATE learned_merchants SET category=? WHERE category=?", (new_name, old_name))
+            db.execute("UPDATE budgets SET category=? WHERE category=?", (new_name, old_name))
+        db.commit()
+        return jsonify({"ok": True})
+    except sqlite3.IntegrityError:
+        return jsonify({"error": "A category with that name already exists"}), 409
+
+@app.route("/api/categories/<int:cat_id>", methods=["DELETE"])
+def api_categories_delete(cat_id):
+    db = get_db()
+    cat = db.execute("SELECT * FROM categories WHERE id=?", (cat_id,)).fetchone()
+    if not cat:
+        return jsonify({"error": "Category not found"}), 404
+    reassign_to = request.args.get("reassign", "")
+    usage = db.execute("SELECT COUNT(*) as c FROM transactions WHERE category=?", (cat["name"],)).fetchone()["c"]
+    if usage > 0 and not reassign_to:
+        return jsonify({"error": "in_use", "count": usage,
+                        "message": f"{usage} transactions use this category. Provide a reassign target."}), 409
+    if usage > 0 and reassign_to:
+        db.execute("UPDATE transactions SET category=? WHERE category=?", (reassign_to, cat["name"]))
+        db.execute("UPDATE budgets SET category=? WHERE category=?", (reassign_to, cat["name"]))
+        db.execute("UPDATE learned_merchants SET category=? WHERE category=?", (reassign_to, cat["name"]))
+    db.execute("DELETE FROM budgets WHERE category=?", (cat["name"],))
+    db.execute("DELETE FROM categories WHERE id=?", (cat_id,))
+    db.commit()
+    return jsonify({"ok": True, "reassigned": usage if reassign_to else 0})
+
 @app.route("/api/averages")
 def api_averages():
     """Monthly average spend per category based on last 6 months."""
@@ -1246,6 +1348,30 @@ label{font-size:10px;color:var(--muted);letter-spacing:.5px;text-transform:upper
 <section id="sec-settings" class="section">
   <div style="max-width:600px">
 
+    <div class="settings-section">
+      <div class="settings-title">Categories</div>
+      <p style="font-size:12px;color:var(--muted);margin-bottom:12px">
+        Manage expense and income categories. Custom categories can be added, renamed, or deleted.
+      </p>
+      <div style="margin-bottom:12px">
+        <div style="font-size:10px;color:var(--muted);letter-spacing:1px;text-transform:uppercase;font-family:var(--mono);margin-bottom:6px">Expense Categories</div>
+        <div id="expense-cat-list"></div>
+      </div>
+      <div style="margin-bottom:12px">
+        <div style="font-size:10px;color:var(--muted);letter-spacing:1px;text-transform:uppercase;font-family:var(--mono);margin-bottom:6px">Income Categories</div>
+        <div id="income-cat-list"></div>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        <input type="text" id="new-cat-name" placeholder="New category name" style="flex:1;min-width:140px">
+        <input type="text" id="new-cat-icon" placeholder="🏷️" style="width:50px;text-align:center" maxlength="2">
+        <select id="new-cat-type" style="width:110px">
+          <option value="Expense">Expense</option>
+          <option value="Income">Income</option>
+        </select>
+        <button class="btn btn-sm" onclick="addCategory()">Add</button>
+      </div>
+    </div>
+
     <div class="settings-section" id="budget-panel">
       <div class="settings-title">Monthly Budgets</div>
       <p style="font-size:12px;color:var(--muted);margin-bottom:12px">
@@ -1443,16 +1569,21 @@ label{font-size:10px;color:var(--muted);letter-spacing:.5px;text-transform:upper
 <div class="toast" id="toast"></div>
 
 <script>
-const EXPENSE_CATS = ["Eating Out","Groceries","Fuel","Transport","Entertainment",
-  "Subscriptions","Healthcare","Pharmacy","Clothing","Shopping","Home","Insurance",
-  "Travel","Education","Phone","Internet","Utilities","Car Payment","Rent",
-  "Savings Transfer","Misc","UNCATEGORIZED"];
-const INCOME_CATS = ["Job","Freelance","Bonus","Refund","Other Income"];
+let EXPENSE_CATS = [];
+let INCOME_CATS = [];
+let ALL_CATEGORIES = [];
 const PALETTE = ["#6ee7b7","#f59e0b","#60a5fa","#a78bfa","#f87171","#34d399",
   "#fbbf24","#818cf8","#fb7185","#4ade80","#e879f9","#38bdf8","#fb923c","#a3e635"];
 
 let months = [], currentMonthIdx = 0, donutChart = null;
 let currentYear = new Date().getFullYear();
+
+async function loadCategories() {
+  ALL_CATEGORIES = await fetch('/api/categories').then(r=>r.json());
+  EXPENSE_CATS = ALL_CATEGORIES.filter(c=>c.type==='Expense').map(c=>c.name);
+  INCOME_CATS = ALL_CATEGORIES.filter(c=>c.type==='Income').map(c=>c.name);
+  EXPENSE_CATS.push('UNCATEGORIZED');
+}
 
 // ── THEME ─────────────────────────────────────────────────────────────────────
 function toggleTheme() {
@@ -1464,6 +1595,9 @@ function toggleTheme() {
 
 // ── INIT ──────────────────────────────────────────────────────────────────────
 async function init() {
+  // Load categories from DB
+  await loadCategories();
+
   // Load settings
   const settings = await fetch('/api/settings').then(r=>r.json());
   const dark = settings.theme !== 'light';
@@ -1474,6 +1608,9 @@ async function init() {
   months = await res.json();
   if (!months.length) {
     document.getElementById('month-display').textContent = 'No data yet — import a CSV!';
+    populateCatFilter();
+    updateCatOptions('f-category','f-type');
+    populateBudgetCat();
     return;
   }
   currentMonthIdx = 0;
@@ -1644,7 +1781,10 @@ function filterByCat(cat) {
 }
 function populateCatFilter() {
   const sel = document.getElementById('filter-cat');
+  const current = sel.value;
+  sel.innerHTML = '<option value="">All</option>';
   [...EXPENSE_CATS,...INCOME_CATS].forEach(c=>{const o=document.createElement('option');o.value=c;o.textContent=c;sel.appendChild(o);});
+  if (current) sel.value = current;
 }
 
 // ── YEAR VIEW ─────────────────────────────────────────────────────────────────
@@ -1689,8 +1829,92 @@ async function renderYear() {
 
 // ── SETTINGS ──────────────────────────────────────────────────────────────────
 async function loadSettings() {
+  loadCategoryList();
   loadBudgets();
   loadLearned();
+}
+
+function renderCatRow(c) {
+  const icon = c.icon ? `<span style="margin-right:4px">${c.icon}</span>` : '';
+  const badge = c.user_created ? '<span style="font-size:9px;color:var(--accent);font-family:var(--mono);margin-left:6px">custom</span>' : '';
+  return `<div class="settings-row" data-cat-id="${c.id}">
+    <div style="display:flex;align-items:center;gap:6px;flex:1">
+      ${icon}<span class="settings-label">${c.name}</span>${badge}
+    </div>
+    <div style="display:flex;gap:4px">
+      <button class="btn-icon" onclick="renameCategory(${c.id},'${c.name.replace(/'/g,"\\'")}','${(c.icon||'').replace(/'/g,"\\'")}')">✏️</button>
+      <button class="btn-icon" onclick="deleteCategory(${c.id},'${c.name.replace(/'/g,"\\'")}','${c.type}')">🗑️</button>
+    </div>
+  </div>`;
+}
+
+function loadCategoryList() {
+  document.getElementById('expense-cat-list').innerHTML =
+    ALL_CATEGORIES.filter(c=>c.type==='Expense').map(renderCatRow).join('')
+    || '<div style="color:var(--muted);font-size:12px">No expense categories</div>';
+  document.getElementById('income-cat-list').innerHTML =
+    ALL_CATEGORIES.filter(c=>c.type==='Income').map(renderCatRow).join('')
+    || '<div style="color:var(--muted);font-size:12px">No income categories</div>';
+}
+
+async function addCategory() {
+  const name = document.getElementById('new-cat-name').value.trim();
+  const icon = document.getElementById('new-cat-icon').value.trim();
+  const type = document.getElementById('new-cat-type').value;
+  if (!name) return toast('Enter a category name','error');
+  const res = await fetch('/api/categories', {method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({name, type, icon})}).then(r=>r.json());
+  if (res.ok) {
+    document.getElementById('new-cat-name').value = '';
+    document.getElementById('new-cat-icon').value = '';
+    await loadCategories();
+    loadCategoryList();
+    populateCatFilter();
+    populateBudgetCat();
+    toast('Category added ✓','success');
+  } else toast(res.error||'Error','error');
+}
+
+async function renameCategory(id, oldName, oldIcon) {
+  const newName = prompt('Rename category:', oldName);
+  if (!newName || newName.trim() === oldName) return;
+  const newIcon = prompt('Icon (emoji, optional):', oldIcon) || '';
+  const res = await fetch(`/api/categories/${id}`, {method:'PATCH',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({name: newName.trim(), icon: newIcon.trim()})}).then(r=>r.json());
+  if (res.ok) {
+    await loadCategories();
+    loadCategoryList();
+    populateCatFilter();
+    populateBudgetCat();
+    toast('Renamed ✓','success');
+  } else toast(res.error||'Error','error');
+}
+
+async function deleteCategory(id, name, type) {
+  const res = await fetch(`/api/categories/${id}`, {method:'DELETE'}).then(r=>r.json());
+  if (res.error === 'in_use') {
+    const sameCats = ALL_CATEGORIES.filter(c=>c.type===type && c.name!==name).map(c=>c.name);
+    const target = prompt(`${res.count} transactions use "${name}".\nReassign them to which category?\n\nOptions: ${sameCats.join(', ')}`);
+    if (!target) return;
+    if (!sameCats.includes(target)) return toast('Invalid category','error');
+    const res2 = await fetch(`/api/categories/${id}?reassign=${encodeURIComponent(target)}`, {method:'DELETE'}).then(r=>r.json());
+    if (res2.ok) {
+      await loadCategories();
+      loadCategoryList();
+      populateCatFilter();
+      populateBudgetCat();
+      toast(`Deleted & reassigned ${res2.reassigned} transactions ✓`,'success');
+      if (months.length) renderMonth();
+    } else toast(res2.error||'Error','error');
+  } else if (res.ok) {
+    await loadCategories();
+    loadCategoryList();
+    populateCatFilter();
+    populateBudgetCat();
+    toast('Deleted ✓','success');
+  } else toast(res.error||'Error','error');
 }
 
 async function loadBudgets() {
@@ -1706,7 +1930,10 @@ async function loadBudgets() {
 
 function populateBudgetCat() {
   const sel = document.getElementById('budget-cat');
-  EXPENSE_CATS.forEach(c=>{ const o=document.createElement('option');o.value=c;o.textContent=c;sel.appendChild(o); });
+  const current = sel.value;
+  sel.innerHTML = '<option value="">Select category…</option>';
+  EXPENSE_CATS.forEach(c=>{ if(c!=='UNCATEGORIZED'){ const o=document.createElement('option');o.value=c;o.textContent=c;sel.appendChild(o); }});
+  if (current) sel.value = current;
 }
 
 async function saveBudget() {
