@@ -8,3 +8,4 @@ venv/
 *.egg-info/
 dist/
 build/
+test_app.py

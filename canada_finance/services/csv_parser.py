@@ -162,7 +162,9 @@ def parse_with_config(text: str, config: dict, learned: dict) -> list:
                 raw_amt = row.get(amt_key, "").strip() if amt_key else ""
                 if not raw_amt:
                     continue
-                amt_val = float(re.sub(r"[,$\s]", "", raw_amt))
+                # Normalize Unicode minus signs (\u2212, \u2013, \u2014) to ASCII
+                cleaned_amt = raw_amt.replace("\u2212", "-").replace("\u2013", "-").replace("\u2014", "-")
+                amt_val = float(re.sub(r"[,$\s]", "", cleaned_amt))
                 if amt_val == 0:
                     continue
                 if amount_sign == "standard":

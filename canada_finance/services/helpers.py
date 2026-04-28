@@ -16,6 +16,9 @@ def parse_date(raw: str) -> str:
 
 
 def safe_float(raw: str) -> float:
-    cleaned = re.sub(r"[,$\s]", "", raw.strip())
+    cleaned = raw.strip()
+    # Normalize Unicode minus signs to ASCII
+    cleaned = cleaned.replace("\u2212", "-").replace("\u2013", "-").replace("\u2014", "-")
+    cleaned = re.sub(r"[,$\s]", "", cleaned)
     cleaned = cleaned.lstrip("-")  # remove sign, we handle direction separately
     return float(cleaned) if cleaned else 0.0
