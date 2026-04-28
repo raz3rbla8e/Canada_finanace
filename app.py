@@ -242,302 +242,212 @@ def safe_float(raw: str) -> float:
     cleaned = cleaned.lstrip("-")  # remove sign, we handle direction separately
     return float(cleaned) if cleaned else 0.0
 
-# ── BANK DETECTION ────────────────────────────────────────────────────────────
+# ── YAML BANK CONFIG ENGINE ───────────────────────────────────────────────────
 
-def detect_bank(header: str) -> str:
+import yaml
+
+BANKS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "banks")
+
+def load_bank_configs() -> list:
+    """Load all YAML bank configs from the banks/ directory."""
+    configs = []
+    if not os.path.isdir(BANKS_DIR):
+        return configs
+    for fname in sorted(os.listdir(BANKS_DIR)):
+        if fname.endswith((".yaml", ".yml")):
+            fpath = os.path.join(BANKS_DIR, fname)
+            with open(fpath, "r", encoding="utf-8") as f:
+                cfg = yaml.safe_load(f)
+                if cfg:
+                    cfg["_filename"] = fname
+                    configs.append(cfg)
+    return configs
+
+def detect_bank_config(header: str, configs: list = None):
+    """Try every YAML config against the CSV header. Returns (config, config_name) or (None, 'unknown')."""
+    if configs is None:
+        configs = load_bank_configs()
     h = header.strip().lower()
-    # Wealthsimple — unique underscore-delimited header
-    if "transaction_date" in h and "net_cash_amount" in h:
-        return "wealthsimple"
-    # National Bank (French headers)
-    if "date de transaction" in h or ("débit" in h and "crédit" in h):
-        return "national_bank"
-    # Tangerine Credit — has memo + name + starts with "transaction date"
-    if h.startswith("transaction date,") and "name" in h and "memo" in h:
-        return "tangerine_credit"
-    # CIBC — starts with "transaction date" but has withdrawals (not memo/name)
-    if h.startswith("transaction date,") and "withdrawals" in h:
-        return "cibc"
-    # Tangerine Debit — date, transaction, name, memo
-    if h.startswith("date,") and "transaction" in h and "name" in h and "memo" in h:
-        return "tangerine_debit"
-    # RBC — date + debit + credit + transaction columns
-    if h.startswith("date,") and "debit" in h and "credit" in h and "transaction" in h:
-        return "rbc"
-    # TD — withdrawals with dollar sign in header, or "total balance"
-    if ("withdrawals ($)" in h or "total balance" in h) and "deposits" in h:
-        return "td"
-    # BMO — date + withdrawals + deposits, no transaction col
-    if h.startswith("date,") and "withdrawals" in h and "deposits" in h:
-        return "bmo"
-    # Scotiabank — simple date + description + amount (3 cols)
-    if h.startswith("date,") and "description" in h and "amount" in h and "withdrawal" not in h:
-        return "scotiabank"
-    return "unknown"
-
-# ── PARSERS ───────────────────────────────────────────────────────────────────
-
-def parse_tangerine_debit(text: str, learned: dict) -> list:
-    """Import all Tangerine chequing transactions: debits as Expense, credits as Income."""
-    txns = []
-    for row in csv.DictReader(io.StringIO(text)):
-        try:
-            amount = float(row.get("Amount", 0))
-            if amount == 0:
+    for cfg in configs:
+        det = cfg.get("detection", {})
+        # header_starts_with check
+        starts = det.get("header_starts_with", "")
+        if starts and not h.startswith(starts.lower()):
+            continue
+        # header_contains — ALL must be present
+        contains = det.get("header_contains", [])
+        if contains and not all(kw.lower() in h for kw in contains):
+            # If header_contains fails, check header_contains_any as alternative
+            contains_any = det.get("header_contains_any", [])
+            if not contains_any or not any(kw.lower() in h for kw in contains_any):
                 continue
-            desc = row.get("Name", "").strip()
-            memo = row.get("Memo", "").strip()
-            if memo:
+        elif not contains:
+            # No header_contains, check header_contains_any alone
+            contains_any = det.get("header_contains_any", [])
+            if contains_any and not any(kw.lower() in h for kw in contains_any):
+                continue
+        # header_excludes — NONE should be present
+        excludes = det.get("header_excludes", [])
+        if excludes and any(kw.lower() in h for kw in excludes):
+            continue
+        config_name = cfg["_filename"].rsplit(".", 1)[0]
+        return cfg, config_name
+    return None, "unknown"
+
+def _find_column(row_keys, col_name, alt_name=None, flexible=False):
+    """Find the actual column key in a CSV row, supporting exact match, case-insensitive, and flexible matching."""
+    if col_name in row_keys:
+        return col_name
+    # Case-insensitive exact
+    for k in row_keys:
+        if k.lower().strip() == col_name.lower().strip():
+            return k
+    # Flexible: substring match
+    if flexible:
+        for k in row_keys:
+            if col_name.lower() in k.lower():
+                return k
+    # Try alternate name
+    if alt_name:
+        return _find_column(row_keys, alt_name, flexible=flexible)
+    return None
+
+def parse_with_config(text: str, config: dict, learned: dict) -> list:
+    """Generic parser that reads any CSV using a YAML bank config."""
+    cols = config.get("columns", {})
+    date_fmts = config.get("date_formats", ["%Y-%m-%d", "%m/%d/%Y"])
+    account_label = config.get("account_label", "Unknown")
+    skip_rules = config.get("skip_rows_where", {})
+    skip_desc = [s.lower() for s in skip_rules.get("description_contains", [])]
+    flexible = config.get("flexible_columns", False)
+    amount_sign = config.get("amount_sign", "standard")
+    credit_default = config.get("credit_default_category", "Other Income")
+    desc_fallback = config.get("description_fallback", [])
+    memo_col_name = cols.get("memo")
+
+    # Resolve account label template (e.g. "Wealthsimple {account_type}")
+    account_template = "{" in account_label
+
+    txns = []
+    reader = csv.DictReader(io.StringIO(text))
+    if not reader.fieldnames:
+        return txns
+
+    row_keys = list(reader.fieldnames)
+
+    # Resolve column names once from first row's keys
+    date_key = _find_column(row_keys, cols.get("date", "Date"),
+                            config.get("date_alt"), flexible)
+    desc_key = _find_column(row_keys, cols.get("description", "Description"),
+                            config.get("description_alt"), flexible)
+
+    has_amount = "amount" in cols
+    has_debit_credit = "debit" in cols and "credit" in cols
+
+    if has_amount:
+        amt_key = _find_column(row_keys, cols["amount"],
+                               config.get("amount_alt"), flexible)
+    elif has_debit_credit:
+        debit_key = _find_column(row_keys, cols["debit"],
+                                 config.get("debit_alt"), flexible)
+        credit_key = _find_column(row_keys, cols["credit"],
+                                  config.get("credit_alt"), flexible)
+    else:
+        return txns
+
+    memo_key = _find_column(row_keys, memo_col_name, flexible=flexible) if memo_col_name else None
+    acct_type_key = _find_column(row_keys, cols.get("account_type", ""), flexible=flexible) if "account_type" in cols else None
+
+    for row in reader:
+        try:
+            # Get description
+            desc = row.get(desc_key, "").strip() if desc_key else ""
+            if not desc and desc_fallback:
+                for fb in desc_fallback:
+                    fb_key = _find_column(row_keys, fb, flexible=flexible)
+                    if fb_key and row.get(fb_key, "").strip():
+                        desc = row[fb_key].strip()
+                        break
+                if not desc:
+                    desc = "Transaction"
+            # Append memo if present
+            if memo_key and row.get(memo_key, "").strip():
+                memo = row[memo_key].strip()
                 desc = f"{desc} — {memo}"
-            dt = parse_date(row["Date"])
-            if amount < 0:
-                txns.append({"date": dt, "type": "Expense", "name": desc,
-                    "category": categorize(desc, learned), "amount": abs(amount),
-                    "account": "Tangerine Chequing", "notes": "", "source": "csv"})
+
+            # Skip rows
+            if skip_desc and any(s in desc.lower() for s in skip_desc):
+                continue
+
+            # Parse date
+            raw_date = row.get(date_key, "").strip() if date_key else ""
+            if not raw_date:
+                continue
+            dt = parse_date(raw_date)
+
+            # Resolve account label
+            if account_template and acct_type_key:
+                acct = account_label.replace(
+                    "{account_type}", row.get(acct_type_key, "Chequing").strip())
             else:
-                cat = categorize(desc, learned)
-                if cat == "UNCATEGORIZED":
-                    cat = "Other Income"
-                txns.append({"date": dt, "type": "Income", "name": desc,
-                    "category": cat, "amount": amount,
-                    "account": "Tangerine Chequing", "notes": "", "source": "csv"})
+                acct = account_label
+
+            # Determine amount and type
+            if has_amount:
+                raw_amt = row.get(amt_key, "").strip() if amt_key else ""
+                if not raw_amt:
+                    continue
+                amt_val = float(re.sub(r"[,$\s]", "", raw_amt))
+                if amt_val == 0:
+                    continue
+                if amount_sign == "standard":
+                    if amt_val < 0:
+                        txns.append(_make_txn(dt, "Expense", desc, abs(amt_val),
+                                              acct, learned, "UNCATEGORIZED"))
+                    else:
+                        txns.append(_make_txn(dt, "Income", desc, amt_val,
+                                              acct, learned, credit_default))
+                else:  # inverted
+                    if amt_val > 0:
+                        txns.append(_make_txn(dt, "Expense", desc, amt_val,
+                                              acct, learned, "UNCATEGORIZED"))
+                    else:
+                        txns.append(_make_txn(dt, "Income", desc, abs(amt_val),
+                                              acct, learned, credit_default))
+            elif has_debit_credit:
+                d_raw = row.get(debit_key, "").strip() if debit_key else ""
+                c_raw = row.get(credit_key, "").strip() if credit_key else ""
+                d = safe_float(d_raw) if d_raw else 0
+                c = safe_float(c_raw) if c_raw else 0
+                if d > 0:
+                    txns.append(_make_txn(dt, "Expense", desc, d,
+                                          acct, learned, "UNCATEGORIZED"))
+                elif c > 0:
+                    txns.append(_make_txn(dt, "Income", desc, c,
+                                          acct, learned, credit_default))
         except Exception:
             continue
     return txns
 
-def parse_tangerine_credit(text: str, learned: dict) -> list:
-    txns = []
-    for row in csv.DictReader(io.StringIO(text)):
-        try:
-            amount = float(row.get("Amount", 0))
-            if amount == 0:
-                continue
-            desc = row.get("Name", "").strip()
-            dt = parse_date(row["Transaction date"])
-            if amount < 0:
-                txns.append({"date": dt, "type": "Expense", "name": desc,
-                    "category": categorize(desc, learned), "amount": abs(amount),
-                    "account": "Tangerine Credit Card", "notes": "", "source": "csv"})
-            else:
-                cat = categorize(desc, learned)
-                if cat == "UNCATEGORIZED":
-                    cat = "Refund"
-                txns.append({"date": dt, "type": "Income", "name": desc,
-                    "category": cat, "amount": amount,
-                    "account": "Tangerine Credit Card", "notes": "", "source": "csv"})
-        except Exception:
-            continue
-    return txns
-
-def parse_wealthsimple(text: str, learned: dict) -> list:
-    """Import all Wealthsimple transactions: credits as Income, debits as Expense."""
-    txns = []
-    for row in csv.DictReader(io.StringIO(text)):
-        try:
-            raw = row.get("net_cash_amount", "")
-            if not raw or raw.strip() == "":
-                continue
-            amount = float(raw)
-            if amount == 0:
-                continue
-            acct = row.get("account_type", "Chequing").strip()
-            desc = row.get("description", "").strip()
-            if not desc:
-                sub = row.get("activity_sub_type", "").strip()
-                desc = sub if sub else row.get("activity_type", "Transaction").strip()
-            dt = parse_date(row["transaction_date"])
-            if amount > 0:
-                cat = categorize(desc, learned)
-                if cat == "UNCATEGORIZED":
-                    cat = "Other Income"
-                txns.append({"date": dt, "type": "Income", "name": desc,
-                    "category": cat, "amount": amount,
-                    "account": f"Wealthsimple {acct}", "notes": "", "source": "csv"})
-            else:
-                txns.append({"date": dt, "type": "Expense", "name": desc,
-                    "category": categorize(desc, learned), "amount": abs(amount),
-                    "account": f"Wealthsimple {acct}", "notes": "", "source": "csv"})
-        except Exception:
-            continue
-    return txns
-
-def parse_td(text: str, learned: dict) -> list:
-    """TD EasyWeb chequing CSV: Date,Description,Withdrawals ($),Deposits ($),Total Balance ($)"""
-    txns = []
-    for row in csv.DictReader(io.StringIO(text)):
-        try:
-            # Find withdrawal and deposit columns flexibly
-            keys = list(row.keys())
-            w_key = next((k for k in keys if "withdrawal" in k.lower()), None)
-            d_key = next((k for k in keys if "deposit" in k.lower()), None)
-            desc_key = next((k for k in keys if "description" in k.lower()), None)
-            date_key = next((k for k in keys if k.lower() == "date"), None)
-            if not all([w_key, d_key, desc_key, date_key]):
-                continue
-            w = safe_float(row[w_key]) if row[w_key].strip() else 0
-            d = safe_float(row[d_key]) if row[d_key].strip() else 0
-            desc = row[desc_key].strip()
-            dt = parse_date(row[date_key])
-            if w > 0:
-                txns.append({"date": dt, "type": "Expense", "name": desc,
-                    "category": categorize(desc, learned), "amount": w,
-                    "account": "TD Chequing", "notes": "", "source": "csv"})
-            elif d > 0:
-                txns.append({"date": dt, "type": "Income", "name": desc,
-                    "category": categorize(desc, learned), "amount": d,
-                    "account": "TD Chequing", "notes": "", "source": "csv"})
-        except Exception:
-            continue
-    return txns
-
-def parse_rbc(text: str, learned: dict) -> list:
-    """RBC CSV: Date,Description,Transaction,Debit,Credit,Total"""
-    txns = []
-    for row in csv.DictReader(io.StringIO(text)):
-        try:
-            desc = row.get("Description", "").strip()
-            dt = parse_date(row.get("Date", ""))
-            debit_raw = row.get("Debit", "").strip()
-            credit_raw = row.get("Credit", "").strip()
-            if debit_raw:
-                amt = safe_float(debit_raw)
-                if amt > 0:
-                    txns.append({"date": dt, "type": "Expense", "name": desc,
-                        "category": categorize(desc, learned), "amount": amt,
-                        "account": "RBC Chequing", "notes": "", "source": "csv"})
-            elif credit_raw:
-                amt = safe_float(credit_raw)
-                if amt > 0:
-                    txns.append({"date": dt, "type": "Income", "name": desc,
-                        "category": categorize(desc, learned), "amount": amt,
-                        "account": "RBC Chequing", "notes": "", "source": "csv"})
-        except Exception:
-            continue
-    return txns
-
-def parse_cibc(text: str, learned: dict) -> list:
-    """CIBC CSV: Transaction Date,Description,Withdrawals,Deposits,Balance"""
-    txns = []
-    for row in csv.DictReader(io.StringIO(text)):
-        try:
-            keys = {k.lower().strip(): k for k in row.keys()}
-            date_key = keys.get("transaction date") or keys.get("date")
-            desc_key = keys.get("description")
-            w_key = keys.get("withdrawals")
-            d_key = keys.get("deposits")
-            if not all([date_key, desc_key, w_key, d_key]):
-                continue
-            desc = row[desc_key].strip()
-            dt = parse_date(row[date_key])
-            w = safe_float(row[w_key]) if row[w_key].strip() else 0
-            d = safe_float(row[d_key]) if row[d_key].strip() else 0
-            if w > 0:
-                txns.append({"date": dt, "type": "Expense", "name": desc,
-                    "category": categorize(desc, learned), "amount": w,
-                    "account": "CIBC Chequing", "notes": "", "source": "csv"})
-            elif d > 0:
-                txns.append({"date": dt, "type": "Income", "name": desc,
-                    "category": categorize(desc, learned), "amount": d,
-                    "account": "CIBC Chequing", "notes": "", "source": "csv"})
-        except Exception:
-            continue
-    return txns
-
-def parse_scotiabank(text: str, learned: dict) -> list:
-    """Scotiabank CSV: Date,Description,Amount (negative=debit, positive=credit)"""
-    txns = []
-    for row in csv.DictReader(io.StringIO(text)):
-        try:
-            amt_raw = row.get("Amount", row.get("Transactions", "")).strip()
-            amt = float(re.sub(r"[,$\s]", "", amt_raw))
-            desc = row.get("Description", row.get("Payee", "")).strip()
-            dt = parse_date(row.get("Date", ""))
-            if amt < 0:
-                txns.append({"date": dt, "type": "Expense", "name": desc,
-                    "category": categorize(desc, learned), "amount": abs(amt),
-                    "account": "Scotiabank", "notes": "", "source": "csv"})
-            elif amt > 0:
-                txns.append({"date": dt, "type": "Income", "name": desc,
-                    "category": categorize(desc, learned), "amount": amt,
-                    "account": "Scotiabank", "notes": "", "source": "csv"})
-        except Exception:
-            continue
-    return txns
-
-def parse_bmo(text: str, learned: dict) -> list:
-    """BMO CSV: Date,Description,Withdrawals,Deposits,Balance"""
-    txns = []
-    for row in csv.DictReader(io.StringIO(text)):
-        try:
-            keys = {k.lower().strip(): k for k in row.keys()}
-            desc_key = keys.get("description") or keys.get("payee")
-            date_key = keys.get("date")
-            w_key = next((v for k,v in keys.items() if "withdrawal" in k), None)
-            d_key = next((v for k,v in keys.items() if "deposit" in k), None)
-            if not all([date_key, desc_key]):
-                continue
-            desc = row[desc_key].strip()
-            dt = parse_date(row[date_key])
-            w = safe_float(row[w_key]) if w_key and row[w_key].strip() else 0
-            d = safe_float(row[d_key]) if d_key and row[d_key].strip() else 0
-            if w > 0:
-                txns.append({"date": dt, "type": "Expense", "name": desc,
-                    "category": categorize(desc, learned), "amount": w,
-                    "account": "BMO Chequing", "notes": "", "source": "csv"})
-            elif d > 0:
-                txns.append({"date": dt, "type": "Income", "name": desc,
-                    "category": categorize(desc, learned), "amount": d,
-                    "account": "BMO Chequing", "notes": "", "source": "csv"})
-        except Exception:
-            continue
-    return txns
-
-def parse_national_bank(text: str, learned: dict) -> list:
-    """National Bank CSV (bilingual): Date,Description,Debit/Débit,Credit/Crédit,Balance"""
-    txns = []
-    for row in csv.DictReader(io.StringIO(text)):
-        try:
-            keys = {k.lower().strip(): k for k in row.keys()}
-            date_key = next((v for k,v in keys.items() if "date" in k), None)
-            desc_key = next((v for k,v in keys.items() if "description" in k or "libellé" in k), None)
-            d_key = next((v for k,v in keys.items() if "débit" in k or "debit" in k), None)
-            c_key = next((v for k,v in keys.items() if "crédit" in k or "credit" in k), None)
-            if not all([date_key, desc_key]):
-                continue
-            desc = row[desc_key].strip()
-            dt = parse_date(row[date_key])
-            d = safe_float(row[d_key]) if d_key and row.get(d_key, "").strip() else 0
-            c = safe_float(row[c_key]) if c_key and row.get(c_key, "").strip() else 0
-            if d > 0:
-                txns.append({"date": dt, "type": "Expense", "name": desc,
-                    "category": categorize(desc, learned), "amount": d,
-                    "account": "National Bank", "notes": "", "source": "csv"})
-            elif c > 0:
-                txns.append({"date": dt, "type": "Income", "name": desc,
-                    "category": categorize(desc, learned), "amount": c,
-                    "account": "National Bank", "notes": "", "source": "csv"})
-        except Exception:
-            continue
-    return txns
+def _make_txn(dt, tx_type, desc, amount, account, learned, default_income_cat):
+    """Build a transaction dict with proper categorization."""
+    cat = categorize(desc, learned)
+    if tx_type == "Income" and cat == "UNCATEGORIZED":
+        cat = default_income_cat
+    return {"date": dt, "type": tx_type, "name": desc, "category": cat,
+            "amount": amount, "account": account, "notes": "", "source": "csv"}
 
 def parse_csv_text(text: str, learned: dict = None) -> tuple:
+    """Detect bank from CSV header using YAML configs, then parse."""
     if learned is None:
         learned = {}
     first_line = text.splitlines()[0] if text.strip() else ""
-    bank = detect_bank(first_line)
-    parsers = {
-        "tangerine_debit":  lambda: parse_tangerine_debit(text, learned),
-        "tangerine_credit": lambda: parse_tangerine_credit(text, learned),
-        "wealthsimple":     lambda: parse_wealthsimple(text, learned),
-        "td":               lambda: parse_td(text, learned),
-        "rbc":              lambda: parse_rbc(text, learned),
-        "cibc":             lambda: parse_cibc(text, learned),
-        "scotiabank":       lambda: parse_scotiabank(text, learned),
-        "bmo":              lambda: parse_bmo(text, learned),
-        "national_bank":    lambda: parse_national_bank(text, learned),
-    }
-    fn = parsers.get(bank)
-    return (fn() if fn else []), bank
+    configs = load_bank_configs()
+    config, bank_name = detect_bank_config(first_line, configs)
+    if config:
+        txns = parse_with_config(text, config, learned)
+        return txns, config.get("name", bank_name)
+    return [], "unknown"
 
 def save_transactions(txns: list) -> tuple:
     added = dupes = 0
@@ -704,13 +614,118 @@ def api_delete(tid):
 def api_import():
     db = get_db()
     learned = load_learned_dict(db)
+    configs = load_bank_configs()
     results = []
     for f in request.files.getlist("files"):
         text = f.read().decode("utf-8-sig")
-        txns, bank = parse_csv_text(text, learned)
-        added, dupes = save_transactions(txns)
-        results.append({"file": f.filename, "bank": bank, "added": added, "dupes": dupes})
+        first_line = text.splitlines()[0] if text.strip() else ""
+        config, bank_name = detect_bank_config(first_line, configs)
+        if config:
+            txns = parse_with_config(text, config, learned)
+            added, dupes = save_transactions(txns)
+            results.append({
+                "file": f.filename, "bank": config.get("name", bank_name),
+                "added": added, "dupes": dupes,
+                "last_verified": config.get("last_verified", ""),
+            })
+        else:
+            results.append({
+                "file": f.filename, "bank": "unknown", "added": 0, "dupes": 0,
+                "last_verified": "",
+            })
     return jsonify(results)
+
+@app.route("/api/detect-csv", methods=["POST"])
+def api_detect_csv():
+    """Detect bank from CSV; if unknown, return headers + preview rows."""
+    f = request.files.get("file")
+    if not f:
+        return jsonify({"error": "No file provided"}), 400
+    text = f.read().decode("utf-8-sig")
+    lines = text.splitlines()
+    if not lines:
+        return jsonify({"error": "Empty file"}), 400
+    configs = load_bank_configs()
+    config, bank_name = detect_bank_config(lines[0], configs)
+    if config:
+        return jsonify({"detected": True, "bank": config.get("name", bank_name),
+                        "config_name": bank_name})
+    # Unknown — return headers + preview rows
+    reader = csv.DictReader(io.StringIO(text))
+    headers = reader.fieldnames or []
+    preview = []
+    for i, row in enumerate(reader):
+        if i >= 5:
+            break
+        preview.append(dict(row))
+    return jsonify({"detected": False, "headers": headers, "preview": preview,
+                    "raw_text": text})
+
+@app.route("/api/save-bank-config", methods=["POST"])
+def api_save_bank_config():
+    """Save a user-defined bank config from the unknown CSV wizard."""
+    d = request.json
+    bank_name = d.get("bank_name", "").strip()
+    if not bank_name:
+        return jsonify({"error": "Bank name is required"}), 400
+    date_col = d.get("date_column", "")
+    desc_col = d.get("description_column", "")
+    amount_mode = d.get("amount_mode", "single")  # "single" or "split"
+    date_format = d.get("date_format", "%Y-%m-%d")
+    if not date_col or not desc_col:
+        return jsonify({"error": "Date and description columns are required"}), 400
+    # Build config
+    slug = re.sub(r"[^a-z0-9]+", "_", bank_name.lower()).strip("_")
+    config = {
+        "name": bank_name,
+        "version": 1,
+        "last_verified": datetime.now().strftime("%Y-%m"),
+        "account_label": bank_name,
+        "encoding": "utf-8-sig",
+        "detection": {"header_contains": d.get("detection_headers", [])},
+        "columns": {"date": date_col, "description": desc_col},
+        "date_formats": [date_format],
+    }
+    if amount_mode == "single":
+        config["columns"]["amount"] = d.get("amount_column", "")
+        config["amount_sign"] = d.get("amount_sign", "standard")
+    else:
+        config["columns"]["debit"] = d.get("debit_column", "")
+        config["columns"]["credit"] = d.get("credit_column", "")
+    # Save YAML
+    fname = f"{slug}.yaml"
+    fpath = os.path.join(BANKS_DIR, fname)
+    os.makedirs(BANKS_DIR, exist_ok=True)
+    with open(fpath, "w", encoding="utf-8") as f:
+        f.write(f"# {bank_name} (user-created)\n")
+        yaml.dump(config, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
+    return jsonify({"ok": True, "config_file": fname, "config_name": slug})
+
+@app.route("/api/preview-parse", methods=["POST"])
+def api_preview_parse():
+    """Preview parsing with a user-defined config (before saving)."""
+    d = request.json
+    text = d.get("raw_text", "")
+    mapping = d.get("mapping", {})
+    if not text or not mapping:
+        return jsonify({"error": "Missing data"}), 400
+    # Build a temporary config from the mapping
+    config = {
+        "columns": {
+            "date": mapping.get("date_column", ""),
+            "description": mapping.get("description_column", ""),
+        },
+        "date_formats": [mapping.get("date_format", "%Y-%m-%d")],
+        "account_label": mapping.get("bank_name", "Unknown Bank"),
+    }
+    if mapping.get("amount_mode") == "single":
+        config["columns"]["amount"] = mapping.get("amount_column", "")
+        config["amount_sign"] = mapping.get("amount_sign", "standard")
+    else:
+        config["columns"]["debit"] = mapping.get("debit_column", "")
+        config["columns"]["credit"] = mapping.get("credit_column", "")
+    txns = parse_with_config(text, config, {})
+    return jsonify({"transactions": txns[:10], "total": len(txns)})
 
 @app.route("/api/export")
 def api_export():
@@ -1336,6 +1351,95 @@ label{font-size:10px;color:var(--muted);letter-spacing:.5px;text-transform:upper
   </div>
 </div>
 
+<!-- UNKNOWN CSV WIZARD MODAL -->
+<div class="modal-backdrop" id="csv-wizard-modal">
+  <div class="modal" style="width:640px">
+    <!-- Step 1: Preview -->
+    <div id="wizard-step-1">
+      <div class="modal-title">⚠ Unknown Bank Format</div>
+      <p style="font-size:13px;color:var(--muted);margin-bottom:14px">
+        We don't recognize this CSV format. Map the columns below so we can import it.
+      </p>
+      <div style="overflow-x:auto;margin-bottom:16px">
+        <table class="txn-table" id="wizard-preview-table" style="font-size:12px"></table>
+      </div>
+      <div class="form-actions">
+        <button class="btn btn-ghost" onclick="closeModal('csv-wizard-modal')">Cancel</button>
+        <button class="btn" onclick="wizardStep(2)">Map Columns →</button>
+      </div>
+    </div>
+    <!-- Step 2: Column Mapping -->
+    <div id="wizard-step-2" style="display:none">
+      <div class="modal-title">Map Columns</div>
+      <div class="form-grid">
+        <div class="form-group">
+          <label>Date Column</label>
+          <select id="wiz-date-col"></select>
+        </div>
+        <div class="form-group">
+          <label>Date Format</label>
+          <select id="wiz-date-fmt">
+            <option value="%Y-%m-%d">YYYY-MM-DD</option>
+            <option value="%m/%d/%Y">MM/DD/YYYY</option>
+            <option value="%d/%m/%Y">DD/MM/YYYY</option>
+            <option value="%m-%d-%Y">MM-DD-YYYY</option>
+            <option value="%d-%m-%Y">DD-MM-YYYY</option>
+          </select>
+        </div>
+        <div class="form-group full">
+          <label>Description Column</label>
+          <select id="wiz-desc-col"></select>
+        </div>
+        <div class="form-group full">
+          <label>Amount Structure</label>
+          <select id="wiz-amt-mode" onchange="toggleAmountMode()">
+            <option value="single">Single column (positive/negative)</option>
+            <option value="split">Two columns (Debit &amp; Credit)</option>
+          </select>
+        </div>
+        <div id="wiz-single-amt" class="form-group full">
+          <label>Amount Column</label>
+          <select id="wiz-amt-col"></select>
+        </div>
+        <div id="wiz-split-amt" style="display:none" class="form-grid full">
+          <div class="form-group">
+            <label>Debit / Withdrawal Column</label>
+            <select id="wiz-debit-col"></select>
+          </div>
+          <div class="form-group">
+            <label>Credit / Deposit Column</label>
+            <select id="wiz-credit-col"></select>
+          </div>
+        </div>
+      </div>
+      <div class="form-actions" style="margin-top:16px">
+        <button class="btn btn-ghost" onclick="wizardStep(1)">← Back</button>
+        <button class="btn" onclick="wizardStep(3)">Name Bank →</button>
+      </div>
+    </div>
+    <!-- Step 3: Name & Preview -->
+    <div id="wizard-step-3" style="display:none">
+      <div class="modal-title">Name This Bank</div>
+      <div class="form-group" style="margin-bottom:16px">
+        <label>Bank / Account Name</label>
+        <input type="text" id="wiz-bank-name" placeholder="e.g. ATB Financial Chequing" style="width:100%">
+      </div>
+      <button class="btn btn-ghost btn-sm" onclick="wizardPreview()" style="margin-bottom:12px">
+        🔍 Test — preview parsed transactions
+      </button>
+      <div id="wizard-preview-parsed" style="max-height:200px;overflow-y:auto;margin-bottom:12px"></div>
+      <div class="form-actions">
+        <button class="btn btn-ghost" onclick="wizardStep(2)">← Back</button>
+        <button class="btn" onclick="wizardSaveAndImport()">Save Config & Import</button>
+      </div>
+      <div style="margin-top:12px;font-size:11px;color:var(--muted)">
+        💡 Want to share this config with the community?
+        <a href="https://github.com/topics/canadafinance" target="_blank" style="color:var(--accent)">Submit on GitHub</a>
+      </div>
+    </div>
+  </div>
+</div>
+
 <div class="toast" id="toast"></div>
 
 <script>
@@ -1720,24 +1824,188 @@ async function deleteFromEdit() {
 }
 
 // ── IMPORT ────────────────────────────────────────────────────────────────────
+let wizardState = {};
+
 function handleDrop(e) {
   e.preventDefault(); document.getElementById('drop-zone').classList.remove('drag');
   handleFiles(e.dataTransfer.files);
 }
+
+function isStaleConfig(lastVerified) {
+  if (!lastVerified) return false;
+  const parts = lastVerified.split('-');
+  const cfgDate = new Date(parseInt(parts[0]), parseInt(parts[1])-1, 1);
+  const sixMonthsAgo = new Date();
+  sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
+  return cfgDate < sixMonthsAgo;
+}
+
 async function handleFiles(files) {
   if (!files.length) return;
+  const unknownFiles = [];
+  const knownFd = new FormData();
+  let hasKnown = false;
+
+  // First pass: detect each file
+  for (const f of files) {
+    const detectFd = new FormData();
+    detectFd.append('file', f);
+    const det = await fetch('/api/detect-csv', {method:'POST', body:detectFd}).then(r=>r.json());
+    if (det.detected) {
+      knownFd.append('files', f);
+      hasKnown = true;
+    } else {
+      unknownFiles.push({file: f, headers: det.headers, preview: det.preview, raw_text: det.raw_text});
+    }
+  }
+
+  // Import known files normally
+  if (hasKnown) {
+    const data = await fetch('/api/import', {method:'POST', body:knownFd}).then(r=>r.json());
+    const resultsHtml = data.map(r => {
+      const staleWarn = isStaleConfig(r.last_verified)
+        ? `<div style="color:var(--amber);font-size:10px;font-family:var(--mono)">⚠ config last verified ${r.last_verified}</div>` : '';
+      return `<div class="result-row">
+        <div style="flex:1"><div>${r.file}</div><div class="result-bank">${r.bank}</div>${staleWarn}</div>
+        <div style="color:var(--accent);font-family:var(--mono)">+${r.added}</div>
+        <div style="color:var(--muted);font-size:11px">${r.dupes} dupes skipped</div>
+      </div>`;
+    }).join('');
+    document.getElementById('import-results').innerHTML = resultsHtml;
+    const mr = await fetch('/api/months').then(r=>r.json()); months=mr;
+    if (months.length) { currentMonthIdx=0; renderMonth(); }
+    toast(`Imported ${data.reduce((s,r)=>s+r.added,0)} transactions`,'success');
+  }
+
+  // Open wizard for the first unknown file
+  if (unknownFiles.length) {
+    openCsvWizard(unknownFiles[0]);
+    // Queue remaining unknowns
+    wizardState.queue = unknownFiles.slice(1);
+  }
+}
+
+function openCsvWizard(info) {
+  wizardState.headers = info.headers;
+  wizardState.preview = info.preview;
+  wizardState.raw_text = info.raw_text;
+  wizardState.file = info.file;
+
+  // Build preview table
+  const table = document.getElementById('wizard-preview-table');
+  const ths = info.headers.map(h => `<th>${h}</th>`).join('');
+  const rows = info.preview.map(r =>
+    `<tr>${info.headers.map(h => `<td>${r[h]||''}</td>`).join('')}</tr>`
+  ).join('');
+  table.innerHTML = `<thead><tr>${ths}</tr></thead><tbody>${rows}</tbody>`;
+
+  // Populate dropdowns
+  const selects = ['wiz-date-col','wiz-desc-col','wiz-amt-col','wiz-debit-col','wiz-credit-col'];
+  selects.forEach(id => {
+    const sel = document.getElementById(id);
+    sel.innerHTML = '<option value="">— select —</option>' +
+      info.headers.map(h => `<option value="${h}">${h}</option>`).join('');
+  });
+
+  // Auto-guess columns
+  info.headers.forEach(h => {
+    const hl = h.toLowerCase();
+    if (hl.includes('date')) document.getElementById('wiz-date-col').value = h;
+    if (hl.includes('description') || hl.includes('payee') || hl.includes('name'))
+      document.getElementById('wiz-desc-col').value = h;
+    if (hl === 'amount' || hl.includes('amount'))
+      document.getElementById('wiz-amt-col').value = h;
+    if (hl.includes('debit') || hl.includes('withdrawal'))
+      document.getElementById('wiz-debit-col').value = h;
+    if (hl.includes('credit') || hl.includes('deposit'))
+      document.getElementById('wiz-credit-col').value = h;
+  });
+
+  wizardStep(1);
+  document.getElementById('csv-wizard-modal').classList.add('open');
+}
+
+function wizardStep(n) {
+  [1,2,3].forEach(i => document.getElementById(`wizard-step-${i}`).style.display = i===n ? '' : 'none');
+}
+
+function toggleAmountMode() {
+  const mode = document.getElementById('wiz-amt-mode').value;
+  document.getElementById('wiz-single-amt').style.display = mode==='single' ? '' : 'none';
+  document.getElementById('wiz-split-amt').style.display = mode==='split' ? '' : 'none';
+}
+
+async function wizardPreview() {
+  const mapping = getWizardMapping();
+  if (!mapping) return;
+  const res = await fetch('/api/preview-parse', {method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({raw_text: wizardState.raw_text, mapping})
+  }).then(r=>r.json());
+  const el = document.getElementById('wizard-preview-parsed');
+  if (res.transactions && res.transactions.length) {
+    el.innerHTML = `<div style="font-size:11px;color:var(--muted);margin-bottom:6px">
+      ${res.total} transaction${res.total!==1?'s':''} found (showing first ${res.transactions.length})</div>` +
+      res.transactions.map(t => `<div style="display:flex;gap:8px;padding:4px 0;border-bottom:1px solid var(--border);font-size:12px">
+        <span style="color:var(--muted);font-family:var(--mono);width:80px">${t.date}</span>
+        <span style="flex:1">${t.name}</span>
+        <span class="badge ${t.type.toLowerCase()}">${t.type}</span>
+        <span class="${t.type==='Income'?'amt-income':'amt-expense'}" style="font-family:var(--mono)">${fmt(t.amount)}</span>
+      </div>`).join('');
+  } else {
+    el.innerHTML = '<div style="color:var(--red);font-size:12px">No transactions parsed — check column mapping</div>';
+  }
+}
+
+function getWizardMapping() {
+  const dateCol = document.getElementById('wiz-date-col').value;
+  const descCol = document.getElementById('wiz-desc-col').value;
+  const bankName = document.getElementById('wiz-bank-name').value.trim() || 'Unknown Bank';
+  const dateFmt = document.getElementById('wiz-date-fmt').value;
+  const amtMode = document.getElementById('wiz-amt-mode').value;
+  if (!dateCol || !descCol) { toast('Select date and description columns','error'); return null; }
+  const mapping = {date_column: dateCol, description_column: descCol,
+    bank_name: bankName, date_format: dateFmt, amount_mode: amtMode};
+  if (amtMode === 'single') {
+    mapping.amount_column = document.getElementById('wiz-amt-col').value;
+    mapping.amount_sign = 'standard';
+    if (!mapping.amount_column) { toast('Select amount column','error'); return null; }
+  } else {
+    mapping.debit_column = document.getElementById('wiz-debit-col').value;
+    mapping.credit_column = document.getElementById('wiz-credit-col').value;
+    if (!mapping.debit_column || !mapping.credit_column) { toast('Select debit and credit columns','error'); return null; }
+  }
+  return mapping;
+}
+
+async function wizardSaveAndImport() {
+  const mapping = getWizardMapping();
+  if (!mapping) return;
+  // Pick unique headers from the CSV for detection
+  mapping.detection_headers = wizardState.headers.slice(0, 3);
+  // Save config
+  const saveRes = await fetch('/api/save-bank-config', {method:'POST',
+    headers:{'Content-Type':'application/json'}, body:JSON.stringify(mapping)}).then(r=>r.json());
+  if (!saveRes.ok) { toast(saveRes.error||'Error saving config','error'); return; }
+  // Re-import the file using the new config
   const fd = new FormData();
-  for (const f of files) fd.append('files', f);
+  fd.append('files', wizardState.file);
   const data = await fetch('/api/import', {method:'POST', body:fd}).then(r=>r.json());
-  document.getElementById('import-results').innerHTML = data.map(r=>`
+  const prev = document.getElementById('import-results').innerHTML;
+  document.getElementById('import-results').innerHTML = prev + data.map(r=>`
     <div class="result-row">
-      <div style="flex:1"><div>${r.file}</div><div class="result-bank">${r.bank}</div></div>
+      <div style="flex:1"><div>${r.file}</div><div class="result-bank">${r.bank} <span style="color:var(--accent);font-size:10px">(new config)</span></div></div>
       <div style="color:var(--accent);font-family:var(--mono)">+${r.added}</div>
       <div style="color:var(--muted);font-size:11px">${r.dupes} dupes skipped</div>
     </div>`).join('');
+  closeModal('csv-wizard-modal');
   const mr = await fetch('/api/months').then(r=>r.json()); months=mr;
   if (months.length) { currentMonthIdx=0; renderMonth(); }
-  toast(`Imported ${data.reduce((s,r)=>s+r.added,0)} transactions`,'success');
+  toast(`Config saved! Imported ${data.reduce((s,r)=>s+r.added,0)} transactions`,'success');
+  // Process next unknown file in queue
+  if (wizardState.queue && wizardState.queue.length) {
+    setTimeout(() => openCsvWizard(wizardState.queue.shift()), 300);
+  }
 }
 
 // ── NAV ───────────────────────────────────────────────────────────────────────

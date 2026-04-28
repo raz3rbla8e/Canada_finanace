@@ -10,6 +10,9 @@ detection:
   header_contains:
     - "withdrawals"
     - "deposits"
+  header_excludes:
+    - "($)"
+    - "transaction"
 
 columns:
   date: "Date"
