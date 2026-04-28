@@ -85,7 +85,34 @@ def init_db():
                 user_created INTEGER DEFAULT 0,
                 sort_order  INTEGER DEFAULT 0
             );
+
+            CREATE TABLE IF NOT EXISTS import_rules (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                name        TEXT NOT NULL,
+                priority    INTEGER DEFAULT 0,
+                enabled     INTEGER DEFAULT 1,
+                action      TEXT NOT NULL CHECK(action IN ('hide','label','pass')),
+                action_value TEXT,
+                updated_at  TEXT DEFAULT (datetime('now'))
+            );
+
+            CREATE TABLE IF NOT EXISTS rule_conditions (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                rule_id     INTEGER NOT NULL REFERENCES import_rules(id) ON DELETE CASCADE,
+                field       TEXT NOT NULL CHECK(field IN ('description','amount','account','type')),
+                operator    TEXT NOT NULL CHECK(operator IN ('contains','equals','greater_than','less_than')),
+                value       TEXT NOT NULL
+            );
         """)
+        # Add hidden column to transactions if not present
+        try:
+            db.execute("ALTER TABLE transactions ADD COLUMN hidden INTEGER DEFAULT 0")
+        except sqlite3.OperationalError:
+            pass  # column already exists
+        try:
+            db.execute("CREATE INDEX IF NOT EXISTS idx_hidden ON transactions(hidden)")
+        except sqlite3.OperationalError:
+            pass
         # Default settings
         db.execute("INSERT OR IGNORE INTO settings (key,value) VALUES ('theme','dark')")
         # Seed default categories (only if table is empty)
@@ -479,6 +506,83 @@ def _make_txn(dt, tx_type, desc, amount, account, learned, default_income_cat):
     return {"date": dt, "type": tx_type, "name": desc, "category": cat,
             "amount": amount, "account": account, "notes": "", "source": "csv"}
 
+# ── IMPORT RULE ENGINE ────────────────────────────────────────────────────────
+
+def load_enabled_rules():
+    """Load all enabled import rules with their conditions, ordered by priority."""
+    with sqlite3.connect(DB_PATH) as db:
+        db.row_factory = sqlite3.Row
+        rules = db.execute(
+            "SELECT * FROM import_rules WHERE enabled=1 ORDER BY priority ASC, id ASC"
+        ).fetchall()
+        result = []
+        for r in rules:
+            conditions = db.execute(
+                "SELECT field, operator, value FROM rule_conditions WHERE rule_id=?",
+                (r["id"],)
+            ).fetchall()
+            result.append({
+                "id": r["id"], "name": r["name"], "priority": r["priority"],
+                "action": r["action"], "action_value": r["action_value"],
+                "conditions": [dict(c) for c in conditions],
+            })
+        return result
+
+def _condition_matches(condition, tx):
+    """Check if a single condition matches a transaction dict."""
+    field = condition["field"]
+    op = condition["operator"]
+    expected = condition["value"]
+    # Map rule fields to transaction dict keys
+    field_map = {"description": "name", "amount": "amount", "account": "account", "type": "type"}
+    tx_key = field_map.get(field, field)
+    actual = tx.get(tx_key, "")
+    if op in ("greater_than", "less_than"):
+        try:
+            actual_num = float(actual) if not isinstance(actual, (int, float)) else actual
+            expected_num = float(expected)
+        except (ValueError, TypeError):
+            return False
+        return actual_num > expected_num if op == "greater_than" else actual_num < expected_num
+    actual_str = str(actual).lower()
+    expected_str = str(expected).lower()
+    if op == "contains":
+        return expected_str in actual_str
+    if op == "equals":
+        return actual_str == expected_str
+    return False
+
+def evaluate_rules(tx, rules=None):
+    """Run a transaction through all enabled rules. Returns matched rule or None.
+    First match wins (lowest priority number)."""
+    if rules is None:
+        rules = load_enabled_rules()
+    for rule in rules:
+        if not rule["conditions"]:
+            continue  # skip rules with no conditions
+        if all(_condition_matches(c, tx) for c in rule["conditions"]):
+            return rule
+    return None
+
+def apply_rule_to_transaction(tx, rule):
+    """Apply matched rule action to a transaction dict (mutates in place)."""
+    action = rule["action"]
+    if action == "hide":
+        tx["hidden"] = 1
+    elif action == "pass":
+        tx["hidden"] = 0
+    elif action == "label":
+        if rule["action_value"]:
+            try:
+                label = json.loads(rule["action_value"])
+                if "type" in label:
+                    tx["type"] = label["type"]
+                if "category" in label:
+                    tx["category"] = label["category"]
+            except (json.JSONDecodeError, TypeError):
+                pass
+    return tx
+
 def parse_csv_text(text: str, learned: dict = None) -> tuple:
     """Detect bank from CSV header using YAML configs, then parse."""
     if learned is None:
@@ -493,15 +597,23 @@ def parse_csv_text(text: str, learned: dict = None) -> tuple:
 
 def save_transactions(txns: list) -> tuple:
     added = dupes = 0
+    rules = load_enabled_rules()
     with sqlite3.connect(DB_PATH) as db:
         for t in txns:
+            # Apply import rules before saving
+            if "hidden" not in t:
+                t["hidden"] = 0
+            matched_rule = evaluate_rules(t, rules)
+            if matched_rule:
+                apply_rule_to_transaction(t, matched_rule)
             h = tx_hash(t["date"], t["name"], t["amount"], t["account"])
             try:
                 db.execute("""INSERT INTO transactions
-                    (date,type,name,category,amount,account,notes,source,tx_hash)
-                    VALUES (?,?,?,?,?,?,?,?,?)""",
+                    (date,type,name,category,amount,account,notes,source,tx_hash,hidden)
+                    VALUES (?,?,?,?,?,?,?,?,?,?)""",
                     (t["date"], t["type"], t["name"], t["category"],
-                     t["amount"], t["account"], t.get("notes",""), t.get("source","csv"), h))
+                     t["amount"], t["account"], t.get("notes",""), t.get("source","csv"), h,
+                     t.get("hidden", 0)))
                 added += 1
             except sqlite3.IntegrityError:
                 dupes += 1
@@ -514,7 +626,7 @@ def save_transactions(txns: list) -> tuple:
 def api_months():
     db = get_db()
     rows = db.execute(
-        "SELECT DISTINCT substr(date,1,7) as m FROM transactions ORDER BY m DESC"
+        "SELECT DISTINCT substr(date,1,7) as m FROM transactions WHERE hidden=0 ORDER BY m DESC"
     ).fetchall()
     return jsonify([r["m"] for r in rows])
 
@@ -524,18 +636,18 @@ def api_summary():
     db = get_db()
     like = f"{month}%"
     income = db.execute(
-        "SELECT COALESCE(SUM(amount),0) as t FROM transactions WHERE type='Income' AND date LIKE ?", (like,)
+        "SELECT COALESCE(SUM(amount),0) as t FROM transactions WHERE type='Income' AND hidden=0 AND date LIKE ?", (like,)
     ).fetchone()["t"]
     expenses = db.execute(
-        "SELECT COALESCE(SUM(amount),0) as t FROM transactions WHERE type='Expense' AND date LIKE ?", (like,)
+        "SELECT COALESCE(SUM(amount),0) as t FROM transactions WHERE type='Expense' AND hidden=0 AND date LIKE ?", (like,)
     ).fetchone()["t"]
     by_cat = db.execute(
         """SELECT category, SUM(amount) as total FROM transactions
-           WHERE type='Expense' AND date LIKE ? GROUP BY category ORDER BY total DESC""", (like,)
+           WHERE type='Expense' AND hidden=0 AND date LIKE ? GROUP BY category ORDER BY total DESC""", (like,)
     ).fetchall()
     income_by_cat = db.execute(
         """SELECT category, SUM(amount) as total FROM transactions
-           WHERE type='Income' AND date LIKE ? GROUP BY category ORDER BY total DESC""", (like,)
+           WHERE type='Income' AND hidden=0 AND date LIKE ? GROUP BY category ORDER BY total DESC""", (like,)
     ).fetchall()
     # Previous month for comparison
     if month:
@@ -543,11 +655,11 @@ def api_summary():
         pm = date(y, m, 1) - timedelta(days=1)
         prev_like = f"{pm.year}-{pm.month:02d}%"
         prev_exp = db.execute(
-            "SELECT COALESCE(SUM(amount),0) as t FROM transactions WHERE type='Expense' AND date LIKE ?", (prev_like,)
+            "SELECT COALESCE(SUM(amount),0) as t FROM transactions WHERE type='Expense' AND hidden=0 AND date LIKE ?", (prev_like,)
         ).fetchone()["t"]
         prev_by_cat = db.execute(
             """SELECT category, SUM(amount) as total FROM transactions
-               WHERE type='Expense' AND date LIKE ? GROUP BY category""", (prev_like,)
+               WHERE type='Expense' AND hidden=0 AND date LIKE ? GROUP BY category""", (prev_like,)
         ).fetchall()
         prev_cat_map = {r["category"]: r["total"] for r in prev_by_cat}
     else:
@@ -578,16 +690,18 @@ def api_transactions():
     cat    = request.args.get("category", "")
     typ    = request.args.get("type", "")
     search = request.args.get("search", "").strip()
+    show_hidden = request.args.get("hidden", "0") == "1"
     db     = get_db()
+    hidden_filter = "hidden=1" if show_hidden else "hidden=0"
     if search:
         term = f"%{search}%"
-        q = """SELECT * FROM transactions WHERE
+        q = f"""SELECT * FROM transactions WHERE {hidden_filter} AND
                (name LIKE ? OR category LIKE ? OR account LIKE ? OR notes LIKE ? OR date LIKE ?)"""
         params = [term]*5
         if typ: q += " AND type=?"; params.append(typ)
         q += " ORDER BY date DESC, id DESC"
     else:
-        q = "SELECT * FROM transactions WHERE date LIKE ?"
+        q = f"SELECT * FROM transactions WHERE {hidden_filter} AND date LIKE ?"
         params = [f"{month}%"]
         if cat: q += " AND category=?"; params.append(cat)
         if typ: q += " AND type=?"; params.append(typ)
@@ -772,11 +886,17 @@ def api_preview_parse():
 @app.route("/api/export")
 def api_export():
     month = request.args.get("month", "")
+    include_hidden = request.args.get("include_hidden", "0") == "1"
     db = get_db()
     q = "SELECT date,type,name,category,amount,account,notes,source FROM transactions"
+    conditions = []
     params = []
+    if not include_hidden:
+        conditions.append("hidden=0")
     if month:
-        q += " WHERE date LIKE ?"; params.append(f"{month}%")
+        conditions.append("date LIKE ?"); params.append(f"{month}%")
+    if conditions:
+        q += " WHERE " + " AND ".join(conditions)
     q += " ORDER BY date DESC"
     rows = db.execute(q, params).fetchall()
     def generate():
@@ -793,12 +913,12 @@ def api_year(year):
     months_data = []
     for m in range(1, 13):
         like = f"{year}-{m:02d}%"
-        inc = db.execute("SELECT COALESCE(SUM(amount),0) as t FROM transactions WHERE type='Income' AND date LIKE ?", (like,)).fetchone()["t"]
-        exp = db.execute("SELECT COALESCE(SUM(amount),0) as t FROM transactions WHERE type='Expense' AND date LIKE ?", (like,)).fetchone()["t"]
+        inc = db.execute("SELECT COALESCE(SUM(amount),0) as t FROM transactions WHERE type='Income' AND hidden=0 AND date LIKE ?", (like,)).fetchone()["t"]
+        exp = db.execute("SELECT COALESCE(SUM(amount),0) as t FROM transactions WHERE type='Expense' AND hidden=0 AND date LIKE ?", (like,)).fetchone()["t"]
         months_data.append({"month": f"{year}-{m:02d}", "income": inc, "expenses": exp, "net": inc-exp})
     top_cats = db.execute("""
         SELECT category, SUM(amount) as total FROM transactions
-        WHERE type='Expense' AND date LIKE ? GROUP BY category ORDER BY total DESC LIMIT 5
+        WHERE type='Expense' AND hidden=0 AND date LIKE ? GROUP BY category ORDER BY total DESC LIMIT 5
     """, (f"{year}%",)).fetchall()
     return jsonify({
         "months": months_data,
@@ -929,13 +1049,265 @@ def api_categories_delete(cat_id):
     db.commit()
     return jsonify({"ok": True, "reassigned": usage if reassign_to else 0})
 
+# ── IMPORT RULES API ─────────────────────────────────────────────────────────
+
+VALID_RULE_ACTIONS = {"hide", "label", "pass"}
+VALID_RULE_FIELDS = {"description", "amount", "account", "type"}
+VALID_RULE_OPERATORS = {"contains", "equals", "greater_than", "less_than"}
+
+@app.route("/api/rules")
+def api_rules_get():
+    db = get_db()
+    rules = db.execute(
+        "SELECT * FROM import_rules ORDER BY priority ASC, id ASC"
+    ).fetchall()
+    result = []
+    for r in rules:
+        conditions = db.execute(
+            "SELECT id, field, operator, value FROM rule_conditions WHERE rule_id=?",
+            (r["id"],)
+        ).fetchall()
+        result.append({
+            **dict(r),
+            "conditions": [dict(c) for c in conditions],
+        })
+    return jsonify(result)
+
+@app.route("/api/rules", methods=["POST"])
+def api_rules_create():
+    d = request.json
+    name = d.get("name", "").strip()
+    action = d.get("action", "")
+    if not name:
+        return jsonify({"error": "Rule name is required"}), 400
+    if action not in VALID_RULE_ACTIONS:
+        return jsonify({"error": f"Invalid action: {action}"}), 400
+    conditions = d.get("conditions", [])
+    if not conditions:
+        return jsonify({"error": "At least one condition is required"}), 400
+    for c in conditions:
+        if c.get("field") not in VALID_RULE_FIELDS:
+            return jsonify({"error": f"Invalid field: {c.get('field')}"}), 400
+        if c.get("operator") not in VALID_RULE_OPERATORS:
+            return jsonify({"error": f"Invalid operator: {c.get('operator')}"}), 400
+        if not c.get("value", "").strip():
+            return jsonify({"error": "Condition value cannot be empty"}), 400
+    db = get_db()
+    max_priority = db.execute("SELECT COALESCE(MAX(priority),0) FROM import_rules").fetchone()[0]
+    cur = db.execute(
+        "INSERT INTO import_rules (name, priority, action, action_value) VALUES (?,?,?,?)",
+        (name, max_priority + 1, action, d.get("action_value", ""))
+    )
+    rule_id = cur.lastrowid
+    for c in conditions:
+        db.execute(
+            "INSERT INTO rule_conditions (rule_id, field, operator, value) VALUES (?,?,?,?)",
+            (rule_id, c["field"], c["operator"], c["value"].strip())
+        )
+    db.commit()
+    return jsonify({"ok": True, "id": rule_id})
+
+@app.route("/api/rules/<int:rule_id>", methods=["PATCH"])
+def api_rules_update(rule_id):
+    d = request.json
+    db = get_db()
+    rule = db.execute("SELECT * FROM import_rules WHERE id=?", (rule_id,)).fetchone()
+    if not rule:
+        return jsonify({"error": "Rule not found"}), 404
+    name = d.get("name", rule["name"]).strip()
+    action = d.get("action", rule["action"])
+    enabled = d.get("enabled", rule["enabled"])
+    action_value = d.get("action_value", rule["action_value"])
+    if action not in VALID_RULE_ACTIONS:
+        return jsonify({"error": f"Invalid action: {action}"}), 400
+    db.execute(
+        "UPDATE import_rules SET name=?, action=?, action_value=?, enabled=?, updated_at=datetime('now') WHERE id=?",
+        (name, action, action_value, int(enabled), rule_id)
+    )
+    if "conditions" in d:
+        conditions = d["conditions"]
+        if not conditions:
+            return jsonify({"error": "At least one condition is required"}), 400
+        for c in conditions:
+            if c.get("field") not in VALID_RULE_FIELDS:
+                return jsonify({"error": f"Invalid field: {c.get('field')}"}), 400
+            if c.get("operator") not in VALID_RULE_OPERATORS:
+                return jsonify({"error": f"Invalid operator: {c.get('operator')}"}), 400
+        db.execute("DELETE FROM rule_conditions WHERE rule_id=?", (rule_id,))
+        for c in conditions:
+            db.execute(
+                "INSERT INTO rule_conditions (rule_id, field, operator, value) VALUES (?,?,?,?)",
+                (rule_id, c["field"], c["operator"], c["value"].strip())
+            )
+    db.commit()
+    return jsonify({"ok": True})
+
+@app.route("/api/rules/<int:rule_id>", methods=["DELETE"])
+def api_rules_delete(rule_id):
+    db = get_db()
+    db.execute("DELETE FROM rule_conditions WHERE rule_id=?", (rule_id,))
+    db.execute("DELETE FROM import_rules WHERE id=?", (rule_id,))
+    db.commit()
+    return jsonify({"ok": True})
+
+@app.route("/api/rules/reorder", methods=["POST"])
+def api_rules_reorder():
+    order = request.json.get("order", [])
+    db = get_db()
+    for i, rule_id in enumerate(order):
+        db.execute("UPDATE import_rules SET priority=? WHERE id=?", (i, int(rule_id)))
+    db.commit()
+    return jsonify({"ok": True})
+
+@app.route("/api/rules/test", methods=["POST"])
+def api_rules_test():
+    """Test a rule definition (saved or unsaved) against existing transactions."""
+    d = request.json
+    conditions = d.get("conditions", [])
+    action = d.get("action", "hide")
+    action_value = d.get("action_value", "")
+    if not conditions:
+        return jsonify({"error": "At least one condition is required"}), 400
+    test_rule = {
+        "id": 0, "name": "test", "priority": 0,
+        "action": action, "action_value": action_value,
+        "conditions": conditions,
+    }
+    db = get_db()
+    rows = db.execute("SELECT * FROM transactions ORDER BY date DESC").fetchall()
+    matches = []
+    for r in rows:
+        tx = dict(r)
+        if all(_condition_matches(c, tx) for c in conditions):
+            matches.append({
+                "id": tx["id"], "date": tx["date"], "name": tx["name"],
+                "category": tx["category"], "type": tx["type"],
+                "amount": tx["amount"], "account": tx["account"],
+                "hidden": tx.get("hidden", 0),
+            })
+    return jsonify({"count": len(matches), "transactions": matches[:50]})
+
+@app.route("/api/rules/apply-all", methods=["POST"])
+def api_rules_apply_all():
+    """Apply all enabled rules retroactively to existing transactions."""
+    rules = load_enabled_rules()
+    if not rules:
+        return jsonify({"affected": 0, "message": "No enabled rules"})
+    db = get_db()
+    rows = db.execute("SELECT * FROM transactions").fetchall()
+    affected = 0
+    for r in rows:
+        tx = dict(r)
+        matched = evaluate_rules(tx, rules)
+        if matched:
+            original_hidden = tx.get("hidden", 0)
+            original_type = tx["type"]
+            original_category = tx["category"]
+            apply_rule_to_transaction(tx, matched)
+            changed = (
+                tx.get("hidden", 0) != original_hidden or
+                tx["type"] != original_type or
+                tx["category"] != original_category
+            )
+            if changed:
+                db.execute(
+                    "UPDATE transactions SET hidden=?, type=?, category=? WHERE id=?",
+                    (tx.get("hidden", 0), tx["type"], tx["category"], tx["id"])
+                )
+                affected += 1
+    db.commit()
+    return jsonify({"affected": affected})
+
+# ── HIDE/UNHIDE TRANSACTIONS ─────────────────────────────────────────────────
+
+@app.route("/api/transactions/<int:tid>/hide", methods=["PATCH"])
+def api_transaction_hide(tid):
+    db = get_db()
+    db.execute("UPDATE transactions SET hidden=1 WHERE id=?", (tid,))
+    db.commit()
+    return jsonify({"ok": True})
+
+@app.route("/api/transactions/<int:tid>/unhide", methods=["PATCH"])
+def api_transaction_unhide(tid):
+    db = get_db()
+    db.execute("UPDATE transactions SET hidden=0 WHERE id=?", (tid,))
+    db.commit()
+    return jsonify({"ok": True})
+
+@app.route("/api/transactions/hidden-count")
+def api_hidden_count():
+    db = get_db()
+    count = db.execute("SELECT COUNT(*) as c FROM transactions WHERE hidden=1").fetchone()["c"]
+    return jsonify({"count": count})
+
+# ── RULE TEMPLATES ────────────────────────────────────────────────────────────
+
+RULES_TEMPLATE_DIR = os.path.join(os.path.dirname(__file__), "rules", "templates")
+
+@app.route("/api/rule-templates")
+def api_rule_templates():
+    templates = []
+    if not os.path.isdir(RULES_TEMPLATE_DIR):
+        return jsonify(templates)
+    for fname in sorted(os.listdir(RULES_TEMPLATE_DIR)):
+        if not fname.endswith(".yaml"):
+            continue
+        fpath = os.path.join(RULES_TEMPLATE_DIR, fname)
+        try:
+            with open(fpath, "r", encoding="utf-8") as f:
+                data = yaml.safe_load(f)
+            templates.append({
+                "file": fname,
+                "name": data.get("name", fname),
+                "description": data.get("description", ""),
+                "rule_count": len(data.get("rules", [])),
+            })
+        except Exception:
+            continue
+    return jsonify(templates)
+
+@app.route("/api/rule-templates/load", methods=["POST"])
+def api_rule_templates_load():
+    fname = request.json.get("file", "")
+    if not fname or ".." in fname:
+        return jsonify({"error": "Invalid template file"}), 400
+    fpath = os.path.join(RULES_TEMPLATE_DIR, fname)
+    if not os.path.isfile(fpath):
+        return jsonify({"error": "Template not found"}), 404
+    with open(fpath, "r", encoding="utf-8") as f:
+        data = yaml.safe_load(f)
+    rules = data.get("rules", [])
+    if not rules:
+        return jsonify({"error": "Template has no rules"}), 400
+    db = get_db()
+    max_priority = db.execute("SELECT COALESCE(MAX(priority),0) FROM import_rules").fetchone()[0]
+    loaded = 0
+    for i, r in enumerate(rules):
+        action = r.get("action", "")
+        if action not in VALID_RULE_ACTIONS:
+            continue
+        cur = db.execute(
+            "INSERT INTO import_rules (name, priority, action, action_value) VALUES (?,?,?,?)",
+            (r.get("name", "Unnamed"), max_priority + i + 1, action, r.get("action_value", ""))
+        )
+        rule_id = cur.lastrowid
+        for c in r.get("conditions", []):
+            if c.get("field") in VALID_RULE_FIELDS and c.get("operator") in VALID_RULE_OPERATORS:
+                db.execute(
+                    "INSERT INTO rule_conditions (rule_id, field, operator, value) VALUES (?,?,?,?)",
+                    (rule_id, c["field"], c["operator"], c.get("value", ""))
+                )
+        loaded += 1
+    db.commit()
+    return jsonify({"ok": True, "loaded": loaded})
+
 @app.route("/api/averages")
 def api_averages():
     """Monthly average spend per category based on last 6 months."""
     db = get_db()
     months_with_data = db.execute("""
         SELECT DISTINCT substr(date,1,7) as m FROM transactions
-        WHERE type='Expense' ORDER BY m DESC LIMIT 6
+        WHERE type='Expense' AND hidden=0 ORDER BY m DESC LIMIT 6
     """).fetchall()
     n = len(months_with_data)
     if n == 0:
@@ -945,7 +1317,7 @@ def api_averages():
         SELECT category,
                ROUND(SUM(amount)/{n}, 2) as avg_monthly,
                COUNT(DISTINCT substr(date,1,7)) as months_seen
-        FROM transactions WHERE type='Expense'
+        FROM transactions WHERE type='Expense' AND hidden=0
         AND substr(date,1,7) IN ({placeholders})
         GROUP BY category ORDER BY avg_monthly DESC
     """, [r['m'] for r in months_with_data]).fetchall()
@@ -1165,6 +1537,22 @@ label{font-size:10px;color:var(--muted);letter-spacing:.5px;text-transform:upper
 .toggle input:checked + .toggle-slider{background:var(--accent)}
 .toggle input:checked + .toggle-slider:before{transform:translateX(18px)}
 
+/* Rule badges */
+.rule-action-badge{display:inline-block;font-size:10px;font-family:var(--mono);padding:2px 8px;
+  border-radius:12px;text-transform:uppercase;letter-spacing:.5px}
+.rule-action-badge.hide{background:rgba(248,113,113,.12);color:var(--red)}
+.rule-action-badge.label{background:rgba(96,165,250,.12);color:var(--blue)}
+.rule-action-badge.pass{background:rgba(110,231,183,.12);color:var(--accent)}
+.rule-conditions-summary{font-size:11px;color:var(--muted);margin-top:2px;font-family:var(--mono)}
+.rule-row{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--border)}
+.rule-row:last-child{border:none}
+.rule-row .rule-info{flex:1}
+.rule-row .rule-name{font-size:13px;font-weight:500}
+.condition-row{display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap}
+.condition-row select,.condition-row input{font-size:12px;padding:5px 8px}
+.hidden-badge{display:inline-flex;align-items:center;gap:4px;font-size:10px;font-family:var(--mono);
+  background:rgba(248,113,113,.1);color:var(--red);padding:2px 8px;border-radius:10px;margin-left:8px}
+
 /* Responsive */
 @media(max-width:900px){
   .cards{grid-template-columns:1fr 1fr}
@@ -1304,6 +1692,9 @@ label{font-size:10px;color:var(--muted);letter-spacing:.5px;text-transform:upper
         <option value="Income">Income</option>
       </select>
       <select id="filter-cat" onchange="loadTransactions()"><option value="">All Categories</option></select>
+      <button class="btn-ghost btn-sm btn" id="hidden-toggle" onclick="toggleHiddenView()" style="display:none">
+        👁 Hidden <span id="hidden-count-badge" class="hidden-badge">0</span>
+      </button>
       <button class="btn btn-sm" onclick="openAddModal()">+ Add</button>
     </div>
   </div>
@@ -1404,6 +1795,23 @@ label{font-size:10px;color:var(--muted);letter-spacing:.5px;text-transform:upper
         Categories you've set manually. Deleted entries revert to auto-categorization.
       </p>
       <div id="learned-list"></div>
+    </div>
+
+    <div class="settings-section">
+      <div class="settings-title" style="display:flex;align-items:center;justify-content:space-between">
+        <span>Import Rules</span>
+        <div style="display:flex;gap:6px">
+          <button class="btn btn-ghost btn-sm" onclick="openTemplateModal()">Load Template</button>
+          <button class="btn btn-sm" onclick="openRuleModal()">+ Add Rule</button>
+        </div>
+      </div>
+      <p style="font-size:12px;color:var(--muted);margin-bottom:12px">
+        Rules run on CSV import to automatically hide, label, or force-show transactions. First match wins by priority.
+      </p>
+      <div style="margin-bottom:12px">
+        <button class="btn btn-ghost btn-sm" onclick="applyAllRules()">⚡ Apply Rules to All Existing Transactions</button>
+      </div>
+      <div id="rules-list"></div>
     </div>
 
   </div>
@@ -1577,6 +1985,63 @@ label{font-size:10px;color:var(--muted);letter-spacing:.5px;text-transform:upper
   </div>
 </div>
 
+<!-- RULE MODAL -->
+<div class="modal-backdrop" id="rule-modal">
+  <div class="modal" style="width:560px">
+    <div class="modal-title" id="rule-modal-title">Add Import Rule</div>
+    <input type="hidden" id="rule-edit-id" value="">
+    <div class="form-group" style="margin-bottom:14px">
+      <label>Rule Name</label>
+      <input type="text" id="rule-name" placeholder="e.g. Hide credit card payments" style="width:100%">
+    </div>
+    <div style="margin-bottom:14px">
+      <label>Conditions <span style="color:var(--muted);text-transform:none;letter-spacing:0">(all must match)</span></label>
+      <div id="rule-conditions-list" style="margin-top:8px"></div>
+      <button class="btn btn-ghost btn-sm" onclick="addConditionRow()" style="margin-top:6px">+ Add Condition</button>
+    </div>
+    <div style="margin-bottom:14px">
+      <label>Action</label>
+      <div style="display:flex;flex-direction:column;gap:8px;margin-top:8px">
+        <label style="display:flex;align-items:center;gap:8px;text-transform:none;letter-spacing:0;font-size:13px;color:var(--text);cursor:pointer">
+          <input type="radio" name="rule-action" value="hide" checked onchange="toggleLabelFields()"> Hide this transaction
+        </label>
+        <label style="display:flex;align-items:center;gap:8px;text-transform:none;letter-spacing:0;font-size:13px;color:var(--text);cursor:pointer">
+          <input type="radio" name="rule-action" value="label" onchange="toggleLabelFields()"> Label as:
+        </label>
+        <div id="rule-label-fields" style="display:none;margin-left:24px;display:none;gap:8px">
+          <select id="rule-label-type" style="width:110px" onchange="updateRuleCatOptions()">
+            <option value="Income">Income</option><option value="Expense">Expense</option>
+          </select>
+          <select id="rule-label-category" style="flex:1"></select>
+        </div>
+        <label style="display:flex;align-items:center;gap:8px;text-transform:none;letter-spacing:0;font-size:13px;color:var(--text);cursor:pointer">
+          <input type="radio" name="rule-action" value="pass" onchange="toggleLabelFields()"> Always show (override hide rules)
+        </label>
+      </div>
+    </div>
+    <div class="form-actions">
+      <button class="btn btn-ghost btn-sm" onclick="testRule()" style="margin-right:auto">🔍 Test</button>
+      <button class="btn btn-ghost" onclick="closeModal('rule-modal')">Cancel</button>
+      <button class="btn" onclick="saveRule()">Save Rule</button>
+    </div>
+    <div id="rule-test-results" style="margin-top:14px;display:none;max-height:200px;overflow-y:auto"></div>
+  </div>
+</div>
+
+<!-- TEMPLATE MODAL -->
+<div class="modal-backdrop" id="template-modal">
+  <div class="modal" style="width:500px">
+    <div class="modal-title">Load Rule Template</div>
+    <p style="font-size:12px;color:var(--muted);margin-bottom:14px">
+      Templates add preset rules to your list. Your existing rules are not affected.
+    </p>
+    <div id="template-list"><div class="empty">Loading…</div></div>
+    <div class="form-actions">
+      <button class="btn btn-ghost" onclick="closeModal('template-modal')">Cancel</button>
+    </div>
+  </div>
+</div>
+
 <div class="toast" id="toast"></div>
 
 <script>
@@ -1622,6 +2087,7 @@ async function init() {
     populateCatFilter();
     updateCatOptions('f-category','f-type');
     populateBudgetCat();
+    updateHiddenCount();
     return;
   }
   currentMonthIdx = 0;
@@ -1631,6 +2097,7 @@ async function init() {
   populateBudgetCat();
   renderMonth();
   loadSettings();
+  updateHiddenCount();
 }
 
 const fmt = n => '$' + Math.abs(n).toLocaleString('en-CA',{minimumFractionDigits:2,maximumFractionDigits:2});
@@ -1749,10 +2216,11 @@ async function loadTransactions() {
   const cat = document.getElementById('filter-cat')?.value || '';
   const search = document.getElementById('search-input')?.value.trim() || '';
   const banner = document.getElementById('search-banner');
+  const hiddenParam = showingHidden ? '&hidden=1' : '';
 
   const url = search
-    ? `/api/transactions?search=${encodeURIComponent(search)}&type=${encodeURIComponent(typ)}`
-    : `/api/transactions?month=${m}&type=${encodeURIComponent(typ)}&category=${encodeURIComponent(cat)}`;
+    ? `/api/transactions?search=${encodeURIComponent(search)}&type=${encodeURIComponent(typ)}${hiddenParam}`
+    : `/api/transactions?month=${m}&type=${encodeURIComponent(typ)}&category=${encodeURIComponent(cat)}${hiddenParam}`;
 
   const txns = await fetch(url).then(r=>r.json());
   const tbody = document.getElementById('all-txns');
@@ -1766,17 +2234,22 @@ async function loadTransactions() {
       ` &nbsp;<span style="cursor:pointer;color:var(--accent)" onclick="clearSearch()">✕ clear</span>`;
   } else { banner.style.display='none'; }
 
-  if (!txns.length) { tbody.innerHTML=''; empty.style.display='block'; return; }
+  if (!txns.length) { tbody.innerHTML=''; empty.style.display='block'; empty.textContent = showingHidden ? 'No hidden transactions' : 'No transactions found'; return; }
   empty.style.display='none';
-  tbody.innerHTML = txns.map(t=>`<tr onclick="openEditModal(${JSON.stringify(t).replace(/"/g,'&quot;')})">
+  tbody.innerHTML = txns.map(t=>{
+    const actionBtn = showingHidden
+      ? `<button class="btn-ghost btn-sm" style="font-size:11px;padding:3px 8px" onclick="event.stopPropagation();unhideTx(${t.id})">Unhide</button>`
+      : `<button class="del-btn" onclick="event.stopPropagation();deleteTx(${t.id})">×</button>`;
+    return `<tr onclick="openEditModal(${JSON.stringify(t).replace(/"/g,'&quot;')})">
     <td style="font-family:var(--mono);color:var(--muted);font-size:11px">${t.date}</td>
     <td>${t.name}</td>
     <td><span class="badge">${t.category}</span></td>
     <td style="color:var(--muted);font-size:11px">${t.account}</td>
     <td><span class="badge ${t.type.toLowerCase()}">${t.type}</span></td>
     <td style="text-align:right" class="${t.type==='Income'?'amt-income':'amt-expense'}">${fmt(t.amount)}</td>
-    <td><button class="del-btn" onclick="event.stopPropagation();deleteTx(${t.id})">×</button></td>
-  </tr>`).join('');
+    <td>${actionBtn}</td>
+  </tr>`;
+  }).join('');
 }
 
 async function deleteTx(id) {
@@ -1843,6 +2316,7 @@ async function loadSettings() {
   loadCategoryList();
   loadBudgets();
   loadLearned();
+  loadRules();
 }
 
 function renderCatRow(c) {
@@ -2244,6 +2718,290 @@ async function wizardSaveAndImport() {
   if (wizardState.queue && wizardState.queue.length) {
     setTimeout(() => openCsvWizard(wizardState.queue.shift()), 300);
   }
+}
+
+// ── IMPORT RULES UI ──────────────────────────────────────────────────────────
+let showingHidden = false;
+
+async function loadRules() {
+  const rules = await fetch('/api/rules').then(r=>r.json());
+  const el = document.getElementById('rules-list');
+  if (!rules.length) {
+    el.innerHTML = '<div style="color:var(--muted);font-size:12px;font-family:var(--mono)">No rules — add one or load a template</div>';
+    return;
+  }
+  el.innerHTML = rules.map(r => {
+    const condText = r.conditions.map(c =>
+      `${c.field} ${c.operator} "${c.value}"`
+    ).join(' AND ');
+    const enabledCheck = r.enabled ? 'checked' : '';
+    let actionInfo = '';
+    if (r.action === 'label' && r.action_value) {
+      try { const v = JSON.parse(r.action_value); actionInfo = ` → ${v.type||''} / ${v.category||''}`; } catch(e) {}
+    }
+    return `<div class="rule-row">
+      <label class="toggle" style="flex-shrink:0">
+        <input type="checkbox" ${enabledCheck} onchange="toggleRule(${r.id}, this.checked)">
+        <span class="toggle-slider"></span>
+      </label>
+      <div class="rule-info">
+        <div class="rule-name">${r.name}
+          <span class="rule-action-badge ${r.action}">${r.action}</span>${actionInfo}
+        </div>
+        <div class="rule-conditions-summary">${condText}</div>
+      </div>
+      <button class="btn-icon" onclick='editRule(${JSON.stringify(r).replace(/'/g,"&#39;")})'>✏️</button>
+      <button class="btn-icon" onclick="deleteRule(${r.id})">🗑️</button>
+    </div>`;
+  }).join('');
+}
+
+async function toggleRule(id, enabled) {
+  await fetch(`/api/rules/${id}`, {method:'PATCH',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({enabled: enabled ? 1 : 0})});
+  toast(enabled ? 'Rule enabled' : 'Rule disabled', 'success');
+}
+
+async function deleteRule(id) {
+  if (!confirm('Delete this rule?')) return;
+  await fetch(`/api/rules/${id}`, {method:'DELETE'});
+  loadRules();
+  toast('Rule deleted', 'success');
+}
+
+function openRuleModal(editData) {
+  document.getElementById('rule-edit-id').value = editData ? editData.id : '';
+  document.getElementById('rule-modal-title').textContent = editData ? 'Edit Import Rule' : 'Add Import Rule';
+  document.getElementById('rule-name').value = editData ? editData.name : '';
+  document.getElementById('rule-test-results').style.display = 'none';
+
+  // Action
+  const action = editData ? editData.action : 'hide';
+  document.querySelectorAll('input[name="rule-action"]').forEach(r => r.checked = r.value === action);
+
+  // Label fields
+  if (editData && editData.action === 'label' && editData.action_value) {
+    try {
+      const v = JSON.parse(editData.action_value);
+      document.getElementById('rule-label-type').value = v.type || 'Expense';
+      updateRuleCatOptions();
+      setTimeout(() => { document.getElementById('rule-label-category').value = v.category || ''; }, 50);
+    } catch(e) {}
+  } else {
+    document.getElementById('rule-label-type').value = 'Expense';
+    updateRuleCatOptions();
+  }
+  toggleLabelFields();
+
+  // Conditions
+  const condList = document.getElementById('rule-conditions-list');
+  condList.innerHTML = '';
+  if (editData && editData.conditions.length) {
+    editData.conditions.forEach(c => addConditionRow(c.field, c.operator, c.value));
+  } else {
+    addConditionRow();
+  }
+
+  document.getElementById('rule-modal').classList.add('open');
+}
+
+function editRule(ruleData) {
+  openRuleModal(ruleData);
+}
+
+function addConditionRow(field, operator, value) {
+  const row = document.createElement('div');
+  row.className = 'condition-row';
+  row.innerHTML = `
+    <select class="cond-field" onchange="updateOperatorOptions(this)" style="width:120px">
+      <option value="description" ${field==='description'?'selected':''}>Description</option>
+      <option value="amount" ${field==='amount'?'selected':''}>Amount</option>
+      <option value="account" ${field==='account'?'selected':''}>Account</option>
+      <option value="type" ${field==='type'?'selected':''}>Type</option>
+    </select>
+    <select class="cond-op" style="width:120px">
+      <option value="contains" ${operator==='contains'?'selected':''}>contains</option>
+      <option value="equals" ${operator==='equals'?'selected':''}>equals</option>
+      <option value="greater_than" ${operator==='greater_than'?'selected':''}>greater than</option>
+      <option value="less_than" ${operator==='less_than'?'selected':''}>less than</option>
+    </select>
+    <input type="text" class="cond-value" value="${(value||'').replace(/"/g,'&quot;')}" placeholder="value" style="flex:1;min-width:100px">
+    <button class="btn-icon" onclick="this.parentElement.remove()" style="color:var(--red)">×</button>`;
+  document.getElementById('rule-conditions-list').appendChild(row);
+  if (field) updateOperatorOptions(row.querySelector('.cond-field'));
+}
+
+function updateOperatorOptions(fieldSelect) {
+  const opSelect = fieldSelect.parentElement.querySelector('.cond-op');
+  const val = fieldSelect.value;
+  const current = opSelect.value;
+  if (val === 'amount') {
+    opSelect.innerHTML = `
+      <option value="equals">equals</option>
+      <option value="greater_than">greater than</option>
+      <option value="less_than">less than</option>`;
+  } else {
+    opSelect.innerHTML = `
+      <option value="contains">contains</option>
+      <option value="equals">equals</option>`;
+  }
+  if ([...opSelect.options].some(o => o.value === current)) opSelect.value = current;
+}
+
+function toggleLabelFields() {
+  const action = document.querySelector('input[name="rule-action"]:checked')?.value;
+  const fields = document.getElementById('rule-label-fields');
+  fields.style.display = action === 'label' ? 'flex' : 'none';
+}
+
+function updateRuleCatOptions() {
+  const type = document.getElementById('rule-label-type').value;
+  const sel = document.getElementById('rule-label-category');
+  const cats = type === 'Income' ? INCOME_CATS : EXPENSE_CATS;
+  sel.innerHTML = cats.filter(c => c !== 'UNCATEGORIZED').map(c => `<option>${c}</option>`).join('');
+}
+
+function getRuleFormData() {
+  const name = document.getElementById('rule-name').value.trim();
+  if (!name) { toast('Enter a rule name', 'error'); return null; }
+  const conditions = [];
+  document.querySelectorAll('#rule-conditions-list .condition-row').forEach(row => {
+    const field = row.querySelector('.cond-field').value;
+    const operator = row.querySelector('.cond-op').value;
+    const value = row.querySelector('.cond-value').value.trim();
+    if (value) conditions.push({field, operator, value});
+  });
+  if (!conditions.length) { toast('Add at least one condition', 'error'); return null; }
+  const action = document.querySelector('input[name="rule-action"]:checked')?.value || 'hide';
+  let action_value = '';
+  if (action === 'label') {
+    action_value = JSON.stringify({
+      type: document.getElementById('rule-label-type').value,
+      category: document.getElementById('rule-label-category').value,
+    });
+  }
+  return {name, action, action_value, conditions};
+}
+
+async function saveRule() {
+  const data = getRuleFormData();
+  if (!data) return;
+  const editId = document.getElementById('rule-edit-id').value;
+  if (editId) {
+    const res = await fetch(`/api/rules/${editId}`, {method:'PATCH',
+      headers:{'Content-Type':'application/json'}, body:JSON.stringify(data)}).then(r=>r.json());
+    if (res.ok) { toast('Rule updated ✓', 'success'); closeModal('rule-modal'); loadRules(); }
+    else toast(res.error||'Error', 'error');
+  } else {
+    const res = await fetch('/api/rules', {method:'POST',
+      headers:{'Content-Type':'application/json'}, body:JSON.stringify(data)}).then(r=>r.json());
+    if (res.ok) { toast('Rule created ✓', 'success'); closeModal('rule-modal'); loadRules(); }
+    else toast(res.error||'Error', 'error');
+  }
+}
+
+async function testRule() {
+  const data = getRuleFormData();
+  if (!data) return;
+  const res = await fetch('/api/rules/test', {method:'POST',
+    headers:{'Content-Type':'application/json'}, body:JSON.stringify(data)}).then(r=>r.json());
+  const el = document.getElementById('rule-test-results');
+  el.style.display = 'block';
+  if (res.count === 0) {
+    el.innerHTML = '<div style="font-size:12px;color:var(--muted);padding:8px 0">No existing transactions match this rule.</div>';
+    return;
+  }
+  el.innerHTML = `<div style="font-size:12px;color:var(--accent);margin-bottom:8px;font-family:var(--mono)">
+    This rule would affect ${res.count} transaction${res.count!==1?'s':''}</div>` +
+    res.transactions.map(t => `<div style="display:flex;gap:8px;padding:4px 0;border-bottom:1px solid var(--border);font-size:11px">
+      <span style="color:var(--muted);font-family:var(--mono);width:75px;flex-shrink:0">${t.date}</span>
+      <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${t.name}</span>
+      <span class="badge ${t.type.toLowerCase()}" style="font-size:10px">${t.type}</span>
+      <span style="font-family:var(--mono);width:70px;text-align:right">${fmt(t.amount)}</span>
+    </div>`).join('');
+}
+
+async function applyAllRules() {
+  if (!confirm('Apply all enabled rules to every existing transaction? This will hide/label matching transactions.')) return;
+  const res = await fetch('/api/rules/apply-all', {method:'POST'}).then(r=>r.json());
+  toast(`Rules applied — ${res.affected} transaction${res.affected!==1?'s':''} affected`, 'success');
+  if (res.affected > 0 && months.length) renderMonth();
+  updateHiddenCount();
+}
+
+async function openTemplateModal() {
+  document.getElementById('template-modal').classList.add('open');
+  const templates = await fetch('/api/rule-templates').then(r=>r.json());
+  const el = document.getElementById('template-list');
+  if (!templates.length) {
+    el.innerHTML = '<div class="empty">No templates found</div>';
+    return;
+  }
+  el.innerHTML = templates.map(t => `<div class="settings-row">
+    <div style="flex:1">
+      <div class="settings-label">${t.name}</div>
+      <div class="settings-sub">${t.description} · ${t.rule_count} rule${t.rule_count!==1?'s':''}</div>
+    </div>
+    <button class="btn btn-sm" onclick="loadTemplate('${t.file.replace(/'/g,"\\'")}', '${t.name.replace(/'/g,"\\'")}', ${t.rule_count})">Load</button>
+  </div>`).join('');
+}
+
+async function loadTemplate(file, name, count) {
+  if (!confirm(`Load "${name}"? This will add ${count} rule${count!==1?'s':''} to your list. Existing rules are not affected.`)) return;
+  const res = await fetch('/api/rule-templates/load', {method:'POST',
+    headers:{'Content-Type':'application/json'}, body:JSON.stringify({file})}).then(r=>r.json());
+  if (res.ok) {
+    toast(`Loaded ${res.loaded} rule${res.loaded!==1?'s':''} from ${name} ✓`, 'success');
+    closeModal('template-modal');
+    loadRules();
+  } else toast(res.error||'Error', 'error');
+}
+
+// ── HIDDEN TRANSACTIONS ──────────────────────────────────────────────────────
+
+async function updateHiddenCount() {
+  const res = await fetch('/api/transactions/hidden-count').then(r=>r.json());
+  const badge = document.getElementById('hidden-count-badge');
+  const btn = document.getElementById('hidden-toggle');
+  badge.textContent = res.count;
+  btn.style.display = res.count > 0 ? '' : 'none';
+}
+
+function toggleHiddenView() {
+  showingHidden = !showingHidden;
+  const btn = document.getElementById('hidden-toggle');
+  const title = document.querySelector('#sec-transactions .txn-title');
+  if (showingHidden) {
+    btn.classList.remove('btn-ghost');
+    btn.style.background = 'rgba(248,113,113,.15)';
+    btn.style.borderColor = 'rgba(248,113,113,.3)';
+    btn.style.color = 'var(--red)';
+    title.textContent = 'Hidden Transactions';
+  } else {
+    btn.classList.add('btn-ghost');
+    btn.style.background = '';
+    btn.style.borderColor = '';
+    btn.style.color = '';
+    title.textContent = 'All Transactions';
+  }
+  loadTransactions();
+}
+
+async function unhideTx(id) {
+  await fetch(`/api/transactions/${id}/unhide`, {method:'PATCH'});
+  toast('Transaction unhidden ✓', 'success');
+  loadTransactions();
+  updateHiddenCount();
+  if (months.length) renderMonth();
+}
+
+async function hideTx(id) {
+  await fetch(`/api/transactions/${id}/hide`, {method:'PATCH'});
+  toast('Transaction hidden ✓', 'success');
+  loadTransactions();
+  updateHiddenCount();
+  if (months.length) renderMonth();
 }
 
 // ── NAV ───────────────────────────────────────────────────────────────────────

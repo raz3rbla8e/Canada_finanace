@@ -1,0 +1,26 @@
+# Self-Employed — shows everything, adds GST/HST tracking category labels
+#
+# HOW TO USE:
+# After loading this template, create a "GST/HST Collected" income category
+# and a "Business Expense" expense category in Settings → Categories.
+# Then edit the rules below to match your business transaction patterns.
+#
+name: "Self-Employed"
+description: "Shows all transactions. Adds rules to label business income and track GST/HST. Edit after loading."
+rules:
+  - name: "Always show all e-transfers (override any hide)"
+    action: pass
+    conditions:
+      - field: description
+        operator: contains
+        value: "interac"
+  - name: "Label large income as Business Income"
+    action: label
+    action_value: '{"type": "Income", "category": "Freelance"}'
+    conditions:
+      - field: type
+        operator: equals
+        value: "Income"
+      - field: amount
+        operator: greater_than
+        value: "500"

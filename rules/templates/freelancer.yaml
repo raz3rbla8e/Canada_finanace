@@ -1,0 +1,20 @@
+# Freelancer — labels incoming e-transfers as freelance income
+name: "Freelancer"
+description: "Labels all incoming Interac e-Transfers as Freelance income. Hides credit card payments."
+rules:
+  - name: "Label e-transfer income as Freelance"
+    action: label
+    action_value: '{"type": "Income", "category": "Freelance"}'
+    conditions:
+      - field: description
+        operator: contains
+        value: "interac"
+      - field: type
+        operator: equals
+        value: "Income"
+  - name: "Hide credit card payments"
+    action: hide
+    conditions:
+      - field: description
+        operator: contains
+        value: "credit card payment"

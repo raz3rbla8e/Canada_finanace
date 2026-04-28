@@ -1,0 +1,22 @@
+# Default — hides credit card payments and internal transfers
+name: "Default"
+description: "Hides credit card payments and internal transfers to avoid double-counting."
+rules:
+  - name: "Hide credit card payments"
+    action: hide
+    conditions:
+      - field: description
+        operator: contains
+        value: "credit card payment"
+  - name: "Hide internal transfers"
+    action: hide
+    conditions:
+      - field: description
+        operator: contains
+        value: "transfer between accounts"
+  - name: "Hide bill payments to credit card"
+    action: hide
+    conditions:
+      - field: description
+        operator: contains
+        value: "payment - bill payment"

@@ -1,0 +1,32 @@
+# Student — simplified setup, hides investment noise
+name: "Student"
+description: "Hides investment and savings account transactions. Labels common student income sources."
+rules:
+  - name: "Hide investment transactions"
+    action: hide
+    conditions:
+      - field: description
+        operator: contains
+        value: "investment"
+  - name: "Hide TFSA contributions"
+    action: hide
+    conditions:
+      - field: description
+        operator: contains
+        value: "tfsa"
+  - name: "Hide RRSP contributions"
+    action: hide
+    conditions:
+      - field: description
+        operator: contains
+        value: "rrsp"
+  - name: "Label e-transfer income as Other Income"
+    action: label
+    action_value: '{"type": "Income", "category": "Other Income"}'
+    conditions:
+      - field: description
+        operator: contains
+        value: "interac"
+      - field: type
+        operator: equals
+        value: "Income"
