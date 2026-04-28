@@ -78,7 +78,6 @@ def init_db():
             );
         """)
         # Default settings
-        db.execute("INSERT OR IGNORE INTO settings (key,value) VALUES ('carpool_names','vaibhav,jonas')")
         db.execute("INSERT OR IGNORE INTO settings (key,value) VALUES ('theme','dark')")
         db.commit()
 
@@ -99,7 +98,7 @@ EXPENSE_CATS = [
     "Home", "Insurance", "Travel", "Education", "Phone", "Internet",
     "Utilities", "Car Payment", "Rent", "Savings Transfer", "Misc",
 ]
-INCOME_CATS = ["Job", "Carpool", "Freelance", "Bonus", "Refund", "Other Income"]
+INCOME_CATS = ["Job", "Freelance", "Bonus", "Refund", "Other Income"]
 
 CATEGORY_RULES = {
     "Subscriptions": [
@@ -278,31 +277,30 @@ def detect_bank(header: str) -> str:
 
 # ── PARSERS ───────────────────────────────────────────────────────────────────
 
-def get_carpool_names() -> list:
-    with sqlite3.connect(DB_PATH) as db:
-        db.row_factory = sqlite3.Row
-        row = db.execute("SELECT value FROM settings WHERE key='carpool_names'").fetchone()
-        if row:
-            return [n.strip().lower() for n in row["value"].split(",") if n.strip()]
-    return []
-
-def parse_tangerine_debit(text: str) -> list:
-    """Keep only incoming e-transfers from carpool names → Income/Carpool."""
-    carpool = get_carpool_names()
+def parse_tangerine_debit(text: str, learned: dict) -> list:
+    """Import all Tangerine chequing transactions: debits as Expense, credits as Income."""
     txns = []
     for row in csv.DictReader(io.StringIO(text)):
         try:
             amount = float(row.get("Amount", 0))
+            if amount == 0:
+                continue
             desc = row.get("Name", "").strip()
-            memo = row.get("Memo", "").lower()
-            desc_l = desc.lower()
-            if amount <= 0 or "interac" not in desc_l:
-                continue
-            if not any(n in desc_l or n in memo for n in carpool):
-                continue
-            txns.append({"date": parse_date(row["Date"]), "type": "Income",
-                "name": desc, "category": "Carpool", "amount": abs(amount),
-                "account": "Tangerine Chequing", "notes": "", "source": "csv"})
+            memo = row.get("Memo", "").strip()
+            if memo:
+                desc = f"{desc} — {memo}"
+            dt = parse_date(row["Date"])
+            if amount < 0:
+                txns.append({"date": dt, "type": "Expense", "name": desc,
+                    "category": categorize(desc, learned), "amount": abs(amount),
+                    "account": "Tangerine Chequing", "notes": "", "source": "csv"})
+            else:
+                cat = categorize(desc, learned)
+                if cat == "UNCATEGORIZED":
+                    cat = "Other Income"
+                txns.append({"date": dt, "type": "Income", "name": desc,
+                    "category": cat, "amount": amount,
+                    "account": "Tangerine Chequing", "notes": "", "source": "csv"})
         except Exception:
             continue
     return txns
@@ -312,35 +310,53 @@ def parse_tangerine_credit(text: str, learned: dict) -> list:
     for row in csv.DictReader(io.StringIO(text)):
         try:
             amount = float(row.get("Amount", 0))
-            if amount >= 0:
+            if amount == 0:
                 continue
             desc = row.get("Name", "").strip()
-            txns.append({"date": parse_date(row["Transaction date"]), "type": "Expense",
-                "name": desc, "category": categorize(desc, learned),
-                "amount": abs(amount), "account": "Tangerine Credit Card",
-                "notes": "", "source": "csv"})
+            dt = parse_date(row["Transaction date"])
+            if amount < 0:
+                txns.append({"date": dt, "type": "Expense", "name": desc,
+                    "category": categorize(desc, learned), "amount": abs(amount),
+                    "account": "Tangerine Credit Card", "notes": "", "source": "csv"})
+            else:
+                cat = categorize(desc, learned)
+                if cat == "UNCATEGORIZED":
+                    cat = "Refund"
+                txns.append({"date": dt, "type": "Income", "name": desc,
+                    "category": cat, "amount": amount,
+                    "account": "Tangerine Credit Card", "notes": "", "source": "csv"})
         except Exception:
             continue
     return txns
 
-def parse_wealthsimple(text: str) -> list:
-    """Import AFT_IN (direct deposit paychecks) as Income/Job."""
+def parse_wealthsimple(text: str, learned: dict) -> list:
+    """Import all Wealthsimple transactions: credits as Income, debits as Expense."""
     txns = []
     for row in csv.DictReader(io.StringIO(text)):
         try:
-            if row.get("activity_sub_type", "").strip() != "AFT_IN":
-                continue
             raw = row.get("net_cash_amount", "")
             if not raw or raw.strip() == "":
                 continue
             amount = float(raw)
-            if amount <= 0:
+            if amount == 0:
                 continue
             acct = row.get("account_type", "Chequing").strip()
-            txns.append({"date": parse_date(row["transaction_date"]), "type": "Income",
-                "name": "Paycheck (Direct Deposit)", "category": "Job",
-                "amount": amount, "account": f"Wealthsimple {acct}",
-                "notes": "", "source": "csv"})
+            desc = row.get("description", "").strip()
+            if not desc:
+                sub = row.get("activity_sub_type", "").strip()
+                desc = sub if sub else row.get("activity_type", "Transaction").strip()
+            dt = parse_date(row["transaction_date"])
+            if amount > 0:
+                cat = categorize(desc, learned)
+                if cat == "UNCATEGORIZED":
+                    cat = "Other Income"
+                txns.append({"date": dt, "type": "Income", "name": desc,
+                    "category": cat, "amount": amount,
+                    "account": f"Wealthsimple {acct}", "notes": "", "source": "csv"})
+            else:
+                txns.append({"date": dt, "type": "Expense", "name": desc,
+                    "category": categorize(desc, learned), "amount": abs(amount),
+                    "account": f"Wealthsimple {acct}", "notes": "", "source": "csv"})
         except Exception:
             continue
     return txns
@@ -510,9 +526,9 @@ def parse_csv_text(text: str, learned: dict = None) -> tuple:
     first_line = text.splitlines()[0] if text.strip() else ""
     bank = detect_bank(first_line)
     parsers = {
-        "tangerine_debit":  lambda: parse_tangerine_debit(text),
+        "tangerine_debit":  lambda: parse_tangerine_debit(text, learned),
         "tangerine_credit": lambda: parse_tangerine_credit(text, learned),
-        "wealthsimple":     lambda: parse_wealthsimple(text),
+        "wealthsimple":     lambda: parse_wealthsimple(text, learned),
         "td":               lambda: parse_td(text, learned),
         "rbc":              lambda: parse_rbc(text, learned),
         "cibc":             lambda: parse_cibc(text, learned),
@@ -1215,18 +1231,6 @@ label{font-size:10px;color:var(--muted);letter-spacing:.5px;text-transform:upper
 <section id="sec-settings" class="section">
   <div style="max-width:600px">
 
-    <div class="settings-section">
-      <div class="settings-title">Carpool People</div>
-      <p style="font-size:12px;color:var(--muted);margin-bottom:12px">
-        E-transfers from these names are imported as Carpool income.
-      </p>
-      <div id="carpool-tags" style="margin-bottom:10px"></div>
-      <div style="display:flex;gap:8px">
-        <input type="text" id="new-carpool" placeholder="Add name (e.g. Jonas)" style="flex:1">
-        <button class="btn btn-sm" onclick="addCarpoolName()">Add</button>
-      </div>
-    </div>
-
     <div class="settings-section" id="budget-panel">
       <div class="settings-title">Monthly Budgets</div>
       <p style="font-size:12px;color:var(--muted);margin-bottom:12px">
@@ -1339,7 +1343,7 @@ const EXPENSE_CATS = ["Eating Out","Groceries","Fuel","Transport","Entertainment
   "Subscriptions","Healthcare","Pharmacy","Clothing","Shopping","Home","Insurance",
   "Travel","Education","Phone","Internet","Utilities","Car Payment","Rent",
   "Savings Transfer","Misc","UNCATEGORIZED"];
-const INCOME_CATS = ["Job","Carpool","Freelance","Bonus","Refund","Other Income"];
+const INCOME_CATS = ["Job","Freelance","Bonus","Refund","Other Income"];
 const PALETTE = ["#6ee7b7","#f59e0b","#60a5fa","#a78bfa","#f87171","#34d399",
   "#fbbf24","#818cf8","#fb7185","#4ade80","#e879f9","#38bdf8","#fb923c","#a3e635"];
 
@@ -1581,37 +1585,8 @@ async function renderYear() {
 
 // ── SETTINGS ──────────────────────────────────────────────────────────────────
 async function loadSettings() {
-  const settings = await fetch('/api/settings').then(r=>r.json());
-  const names = (settings.carpool_names || '').split(',').filter(Boolean);
-  renderCarpoolTags(names);
   loadBudgets();
   loadLearned();
-}
-
-function renderCarpoolTags(names) {
-  document.getElementById('carpool-tags').innerHTML = names.map(n=>
-    `<span class="tag">${n}<span class="x" onclick="removeCarpoolName('${n}')">×</span></span>`
-  ).join('') || '<span style="color:var(--muted);font-size:12px">None added</span>';
-}
-
-async function addCarpoolName() {
-  const inp = document.getElementById('new-carpool');
-  const name = inp.value.trim().toLowerCase();
-  if (!name) return;
-  const settings = await fetch('/api/settings').then(r=>r.json());
-  const names = (settings.carpool_names||'').split(',').filter(Boolean);
-  if (!names.includes(name)) names.push(name);
-  await fetch('/api/settings', {method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({carpool_names: names.join(',')})});
-  inp.value=''; renderCarpoolTags(names); toast('Added ✓','success');
-}
-
-async function removeCarpoolName(name) {
-  const settings = await fetch('/api/settings').then(r=>r.json());
-  const names = (settings.carpool_names||'').split(',').filter(n=>n&&n!==name);
-  await fetch('/api/settings', {method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({carpool_names: names.join(',')})});
-  renderCarpoolTags(names);
 }
 
 async function loadBudgets() {
