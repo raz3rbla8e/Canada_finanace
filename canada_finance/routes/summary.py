@@ -155,7 +155,7 @@ def api_recurring():
                MAX(date) as last_seen,
                MIN(date) as first_seen
         FROM transactions
-        WHERE hidden=0
+        WHERE hidden=0 AND type='Expense'
         GROUP BY LOWER(TRIM(name))
         HAVING months_seen >= ?
         ORDER BY months_seen DESC, avg_amount DESC

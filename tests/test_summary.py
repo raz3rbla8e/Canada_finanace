@@ -204,13 +204,12 @@ def test_recurring_excludes_hidden(client):
     assert r["count"] == 0
 
 
-def test_recurring_includes_income(client):
-    """Recurring income (e.g. salary) should be detected too."""
+def test_recurring_excludes_income(client):
+    """Recurring income (e.g. salary) should NOT appear in recurring/subscriptions."""
     for m in range(1, 4):
         seed_transaction(client, date=f"2026-{m:02d}-01", type="Income",
                          amount="3000.00", category="Job", name="PAYROLL DEPOSIT")
     r = client.get("/api/recurring").get_json()
-    assert r["count"] == 1
-    assert r["recurring"][0]["type"] == "Income"
-    # Income should NOT count toward committed expenses
+    assert r["count"] == 0
+    assert r["recurring"] == []
     assert r["total_monthly_committed"] == 0
