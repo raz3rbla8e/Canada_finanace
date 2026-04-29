@@ -4,6 +4,7 @@ from canada_finance.services.csv_parser import load_bank_configs, detect_bank_co
 
 # Simulated CSV headers (first line) for each Canadian bank
 BANK_HEADERS = {
+    "amex": ",Transaction Details: ,American Express® Green Card,,,,,,,",
     "bmo": "Date,Description,Withdrawals,Deposits,Balance",
     "cibc": "Transaction Date,Description,Withdrawals,Deposits,Balance",
     "national_bank": "Date de transaction,Description,Débit,Crédit,Solde",
@@ -17,6 +18,7 @@ BANK_HEADERS = {
 }
 
 EXPECTED_NAMES = {
+    "amex": "American Express (Credit Card)",
     "bmo": "BMO (Chequing)",
     "cibc": "CIBC (Chequing)",
     "national_bank": "National Bank",
@@ -35,6 +37,12 @@ def _configs():
 
 
 # ── Each bank header matches the correct config ───────────────────────────────
+
+def test_detect_amex():
+    cfg, _ = detect_bank_config(BANK_HEADERS["amex"], _configs())
+    assert cfg is not None, "Amex header not detected"
+    assert cfg["name"] == EXPECTED_NAMES["amex"]
+
 
 def test_detect_bmo():
     cfg, _ = detect_bank_config(BANK_HEADERS["bmo"], _configs())

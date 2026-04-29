@@ -94,6 +94,13 @@ def parse_with_config(text: str, config: dict, learned: dict) -> list:
     account_template = "{" in account_label
 
     txns = []
+
+    # Skip metadata rows before the real CSV header (e.g. Amex has 12)
+    skip = config.get("skip_header_rows", 0)
+    if skip:
+        lines = text.splitlines(True)
+        text = "".join(lines[skip:])
+
     reader = csv.DictReader(io.StringIO(text))
     if not reader.fieldnames:
         return txns

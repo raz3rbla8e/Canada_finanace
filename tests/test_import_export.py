@@ -1,7 +1,7 @@
 """Tests for CSV import, detect, wizard preview, export, and file size limit."""
 import io
 
-from tests.conftest import SAMPLE_TANGERINE_CSV, XSS_CSV
+from tests.conftest import SAMPLE_TANGERINE_CSV, SAMPLE_AMEX_CSV, SAMPLE_AMEX_REDACTED_CSV, XSS_CSV
 
 
 # ── Import ─────────────────────────────────────────────────────────────────────
@@ -318,3 +318,66 @@ def test_restore_rejects_wrong_extension(client):
 def test_restore_no_file(client):
     r = client.post("/api/restore", content_type="multipart/form-data")
     assert r.status_code == 400
+
+
+# ── Amex Import ────────────────────────────────────────────────────────────────
+
+def test_import_amex_csv(client):
+    """Amex CSV with 12 metadata rows should be detected and imported."""
+    data = {"files": (io.BytesIO(SAMPLE_AMEX_CSV.encode()), "amex.csv")}
+    r = client.post("/api/import", data=data, content_type="multipart/form-data")
+    result = r.get_json()
+    assert r.status_code == 200
+    assert result[0]["bank"] == "American Express (Credit Card)"
+    # 3 real charges, 1 "PAYMENT RECEIVED" skipped
+    assert result[0]["added"] == 3
+
+
+def test_amex_charges_are_expenses(client):
+    """Positive Amex amounts should import as Expense (inverted sign)."""
+    data = {"files": (io.BytesIO(SAMPLE_AMEX_CSV.encode()), "amex.csv")}
+    client.post("/api/import", data=data, content_type="multipart/form-data")
+    txns = client.get("/api/transactions?month=2026-04").get_json()
+    expenses = [t for t in txns if t["type"] == "Expense"]
+    assert len(expenses) == 3
+    amounts = sorted([t["amount"] for t in expenses])
+    assert amounts == [5.49, 65.0, 85.23]
+
+
+def test_amex_skips_payment_received(client):
+    """'PAYMENT RECEIVED' rows should be skipped (not real transactions)."""
+    data = {"files": (io.BytesIO(SAMPLE_AMEX_CSV.encode()), "amex.csv")}
+    client.post("/api/import", data=data, content_type="multipart/form-data")
+    txns = client.get("/api/transactions?search=PAYMENT RECEIVED").get_json()
+    assert len(txns) == 0
+
+
+def test_amex_description_fallback(client):
+    """When Description is empty, parser should fall back to Additional Information."""
+    data = {"files": (io.BytesIO(SAMPLE_AMEX_REDACTED_CSV.encode()), "amex.csv")}
+    r = client.post("/api/import", data=data, content_type="multipart/form-data")
+    result = r.get_json()
+    assert result[0]["added"] == 2
+    txns = client.get("/api/transactions?month=2026-04").get_json()
+    names = [t["name"] for t in txns]
+    assert any("TIM HORTONS" in n for n in names)
+    assert any("FOOD BASICS" in n for n in names)
+
+
+def test_amex_date_format(client):
+    """Amex dates like '27 Apr. 2026' should parse correctly."""
+    data = {"files": (io.BytesIO(SAMPLE_AMEX_CSV.encode()), "amex.csv")}
+    client.post("/api/import", data=data, content_type="multipart/form-data")
+    txns = client.get("/api/transactions?month=2026-04").get_json()
+    dates = sorted([t["date"] for t in txns])
+    assert "2026-04-22" in dates
+    assert "2026-04-25" in dates
+    assert "2026-04-27" in dates
+
+
+def test_amex_account_label(client):
+    """Imported Amex transactions should have 'Amex Credit Card' account."""
+    data = {"files": (io.BytesIO(SAMPLE_AMEX_CSV.encode()), "amex.csv")}
+    client.post("/api/import", data=data, content_type="multipart/form-data")
+    txns = client.get("/api/transactions?month=2026-04").get_json()
+    assert all(t["account"] == "Amex Credit Card" for t in txns)
