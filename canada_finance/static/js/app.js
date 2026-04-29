@@ -751,7 +751,11 @@ async function handleFiles(files) {
     }).join('');
     document.getElementById('import-results').innerHTML = resultsHtml;
     months = await apiFetch('/api/months') || [];
-    if (months.length) { currentMonthIdx=0; renderMonth(); }
+    if (months.length) {
+      currentMonthIdx=0; renderMonth();
+      document.getElementById('empty-state').style.display = 'none';
+      document.getElementById('dashboard-content').style.display = '';
+    }
     toast(`Imported ${data.reduce((s,r)=>s+r.added,0)} transactions`,'success');
   }
 
@@ -887,7 +891,11 @@ async function wizardSaveAndImport() {
     </div>`).join('');
   closeModal('csv-wizard-modal');
   months = await apiFetch('/api/months') || [];
-  if (months.length) { currentMonthIdx=0; renderMonth(); }
+  if (months.length) {
+    currentMonthIdx=0; renderMonth();
+    document.getElementById('empty-state').style.display = 'none';
+    document.getElementById('dashboard-content').style.display = '';
+  }
   toast(`Config saved! Imported ${data.reduce((s,r)=>s+r.added,0)} transactions`,'success');
   // Process next unknown file in queue
   if (wizardState.queue && wizardState.queue.length) {
@@ -1248,9 +1256,20 @@ function nav(id) {
   document.querySelectorAll('.nav-btn').forEach(b=>{
     if (b.getAttribute('onclick')?.includes(`'${id}'`)) b.classList.add('active');
   });
+  if (id==='dashboard' && document.getElementById('empty-state').style.display !== 'none') refreshDashboard();
   if (id==='transactions') loadTransactions();
   if (id==='year') renderYear();
   if (id==='settings') loadSettings();
+}
+
+async function refreshDashboard() {
+  months = await apiFetch('/api/months') || [];
+  if (months.length) {
+    document.getElementById('empty-state').style.display = 'none';
+    document.getElementById('dashboard-content').style.display = '';
+    currentMonthIdx = 0;
+    renderMonth();
+  }
 }
 
 // ── EXPORT ────────────────────────────────────────────────────────────────────
