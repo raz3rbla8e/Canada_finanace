@@ -12,6 +12,8 @@ detection:
     - "amount"
   header_excludes:
     - "withdrawal"
+    - "debit"
+    - "credit"
 
 columns:
   date: "Date"
