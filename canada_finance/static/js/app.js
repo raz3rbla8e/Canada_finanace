@@ -573,6 +573,7 @@ function openCsvWizard(info) {
   });
 
   // Auto-guess columns
+  let guessedDebit = false, guessedCredit = false;
   info.headers.forEach(h => {
     const hl = h.toLowerCase();
     if (hl.includes('date')) document.getElementById('wiz-date-col').value = h;
@@ -581,10 +582,16 @@ function openCsvWizard(info) {
     if (hl === 'amount' || hl.includes('amount'))
       document.getElementById('wiz-amt-col').value = h;
     if (hl.includes('debit') || hl.includes('withdrawal'))
-      document.getElementById('wiz-debit-col').value = h;
+      { document.getElementById('wiz-debit-col').value = h; guessedDebit = true; }
     if (hl.includes('credit') || hl.includes('deposit'))
-      document.getElementById('wiz-credit-col').value = h;
+      { document.getElementById('wiz-credit-col').value = h; guessedCredit = true; }
   });
+
+  // Auto-switch to split mode if both debit and credit columns were detected
+  if (guessedDebit && guessedCredit) {
+    document.getElementById('wiz-amt-mode').value = 'split';
+    toggleAmountMode();
+  }
 
   wizardStep(1);
   document.getElementById('csv-wizard-modal').classList.add('open');
