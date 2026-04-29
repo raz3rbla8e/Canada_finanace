@@ -105,7 +105,9 @@ def api_update(tid):
             ON CONFLICT(keyword) DO UPDATE SET category=excluded.category, updated_at=datetime('now')
         """, (orig_name, new_cat))
         all_learned = db.execute("SELECT keyword, category FROM learned_merchants").fetchall()
-        for row in db.execute("SELECT id, name FROM transactions WHERE category='UNCATEGORIZED'").fetchall():
+        orig_cat = original["category"]
+        fixable = "SELECT id, name FROM transactions WHERE id!=? AND (category='UNCATEGORIZED' OR category=?)"
+        for row in db.execute(fixable, (tid, orig_cat)).fetchall():
             rn = row["name"].lower()
             for lrow in all_learned:
                 words = [w for w in lrow["keyword"].split() if len(w) > 3]

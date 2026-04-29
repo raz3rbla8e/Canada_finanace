@@ -358,6 +358,18 @@
   </div>
 </div>
 
+<!-- BULK CATEGORIZE MODAL -->
+<div class="modal-backdrop" id="bulk-cat-modal">
+  <div class="modal" style="width:360px">
+    <div class="modal-title">Categorize Selected</div>
+    <div class="form-group"><label>Category</label><select id="bulk-cat-select"></select></div>
+    <div class="form-actions">
+      <button class="btn btn-ghost" onclick="closeModal('bulk-cat-modal')">Cancel</button>
+      <button class="btn" onclick="submitBulkCategorize()">Apply</button>
+    </div>
+  </div>
+</div>
+
 <!-- UNKNOWN CSV WIZARD MODAL -->
 <div class="modal-backdrop" id="rule-suggest-modal">
   <div class="modal" style="width:480px">

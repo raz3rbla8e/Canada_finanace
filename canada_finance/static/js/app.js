@@ -360,29 +360,35 @@ function updateBulkToolbar() {
 function clearSelection() { selectedIds.clear(); document.querySelectorAll('#all-txns tr.selected').forEach(r=>r.classList.remove('selected')); updateBulkToolbar(); }
 async function bulkDelete() {
   if (!confirm(`Delete ${selectedIds.size} transaction(s)?`)) return;
-  await apiFetch('/api/bulk-delete', {method:'POST', body:JSON.stringify({ids:[...selectedIds]})});
+  await apiFetch('/api/bulk-delete', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ids:[...selectedIds]})});
   toast(`Deleted ${selectedIds.size}`,'success'); clearSelection(); renderMonth(); loadTransactions();
 }
 async function bulkCategorize() {
-  const cat = prompt('Enter category name:');
+  const sel = document.getElementById('bulk-cat-select');
+  sel.innerHTML = EXPENSE_CATS.map(c=>`<option value="${escapeAttr(c)}">${escapeHtml(c)}</option>`).join('');
+  document.getElementById('bulk-cat-modal').classList.add('open');
+}
+async function submitBulkCategorize() {
+  const cat = document.getElementById('bulk-cat-select').value;
   if (!cat) return;
-  await apiFetch('/api/bulk-categorize', {method:'POST', body:JSON.stringify({ids:[...selectedIds], category:cat})});
+  closeModal('bulk-cat-modal');
+  await apiFetch('/api/bulk-categorize', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ids:[...selectedIds], category:cat})});
   toast(`Categorized ${selectedIds.size}`,'success'); clearSelection(); renderMonth(); loadTransactions();
 }
 async function bulkHide() {
   const ids = [...selectedIds];
-  await apiFetch('/api/bulk-hide', {method:'POST', body:JSON.stringify({ids})});
+  await apiFetch('/api/bulk-hide', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ids})});
   toast(`Hidden ${ids.length}`,'success');
   // Ask if user wants to create auto-hide rules for future imports
-  const suggestions = await apiFetch('/api/suggest-hide-rules', {method:'POST', body:JSON.stringify({ids})});
-  clearSelection(); renderMonth(); loadTransactions();
+  const suggestions = await apiFetch('/api/suggest-hide-rules', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ids})});
+  clearSelection(); renderMonth(); loadTransactions(); updateHiddenCount();
   if (suggestions && suggestions.suggestions && suggestions.suggestions.length > 0) {
     showRuleSuggestionModal(suggestions.suggestions);
   }
 }
 async function bulkUnhide() {
-  await apiFetch('/api/bulk-unhide', {method:'POST', body:JSON.stringify({ids:[...selectedIds]})});
-  toast(`Unhidden ${selectedIds.size}`,'success'); clearSelection(); renderMonth(); loadTransactions();
+  await apiFetch('/api/bulk-unhide', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ids:[...selectedIds]})});
+  toast(`Unhidden ${selectedIds.size}`,'success'); clearSelection(); renderMonth(); loadTransactions(); updateHiddenCount();
 }
 
 // ── RULE SUGGESTION MODAL ─────────────────────────────────────────────────────
