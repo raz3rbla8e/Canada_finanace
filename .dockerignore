@@ -1,0 +1,17 @@
+.git
+.gitignore
+.env
+.secret_key
+.installed
+.pytest_cache
+.venv
+venv
+*.egg-info
+dist
+build
+*.db
+__pycache__
+*.pyc
+*.spec
+tests
+README.md

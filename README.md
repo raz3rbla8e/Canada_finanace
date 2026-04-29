@@ -47,36 +47,45 @@ A free, private, self-hosted personal finance dashboard for Canadians. Runs loca
 
 ## Setup
 
-**Requirements:** Python 3.9+
+### Easiest: double-click to launch
+
+1. Install [Python 3.9+](https://www.python.org/downloads/) (check "Add Python to PATH" during install)
+2. Download this repo (green **Code** button → **Download ZIP**), unzip it
+3. **Windows:** double-click `start.bat`
+4. **Mac/Linux:** open a terminal in the folder, run `chmod +x start.sh && ./start.sh`
+
+The app installs dependencies automatically on first launch and opens your browser.
+
+### Manual setup
 
 ```bash
-# 1. Clone or download this repo
-git clone https://github.com/raz3rbla8e/Canada_finanace
-cd Canada_finanace
-
-# 2. Install
+git clone https://github.com/raz3rbla8e/Canada-finance
+cd Canada-finance
 pip install -r requirements.txt
-
-# 3. Run
 python app.py
-
-# 4. Open in browser
-# http://localhost:5000
+# Open http://localhost:5000
 ```
 
-That's it. A `finance.db` file is created automatically on first run.
+### Standalone `.exe` (no Python needed)
 
-**Alternative installs:**
-- `pip install .` — full package install (adds the `canada-finance` CLI command)
-- `pip install -e .` — editable/dev mode (changes take effect immediately)
+Download `CanadaFinance.exe` from the [Releases](https://github.com/raz3rbla8e/Canada-finance/releases) page — just run it.
 
-**Docker:**
+To build the `.exe` yourself:
+```bash
+pip install pyinstaller
+pyinstaller canada_finance.spec
+# Output: dist/CanadaFinance.exe
+```
+
+### Docker
+
 ```bash
 docker build -t canada-finance .
 docker run -p 5000:5000 -v finance_data:/app canada-finance
 ```
 
-**Running tests:**
+### Running tests
+
 ```bash
 pip install -e ".[dev]"
 pytest
