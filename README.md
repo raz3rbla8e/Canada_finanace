@@ -11,8 +11,11 @@ A free, private, self-hosted personal finance dashboard for Canadians. Runs loca
 - **Month-over-month comparison** — see if you're spending more or less than last month
 - **Budget targets** — set spending limits per category with visual progress bars
 - **Monthly averages** — see your average spend per category over the last 6 months
+- **Recurring/subscription detection** — automatically identifies merchants that charge you every month, flags price changes
 - **Year in review** — full annual breakdown with monthly bars and top 5 categories
+- **Account filter** — filter transactions by bank account (TD, Tangerine, etc.)
 - **Open search** — search "costco" and get both Costco Gas and Wholesale across all months
+- **Bulk actions** — select multiple transactions and delete, categorize, or hide them all at once
 - **Edit & learn** — fix a category once, it remembers forever (learned merchants)
 - **Retro-fix** — when you fix a category, the app automatically re-categorizes similar UNCATEGORIZED transactions
 - **Manual entries** — add cash, e-transfers, or any transaction not in a CSV
@@ -20,7 +23,8 @@ A free, private, self-hosted personal finance dashboard for Canadians. Runs loca
 - **Rule templates** — one-click presets (Default, Freelancer, Student, Self-Employed, Carpool)
 - **Hide/unhide transactions** — hide internal transfers or noise; view and restore hidden items
 - **Custom categories** — add, rename, or delete categories with emoji icons
-- **Export CSV** — export any month or all time
+- **Export CSV** — export any month or all time (re-importable — full round trip)
+- **Backup/restore** — download your entire database as a backup, restore from a backup file
 - **Dark/light mode** — toggle in the sidebar
 - **Zero cost** — no subscriptions, no cloud, no ads, no tracking
 
@@ -91,6 +95,8 @@ pip install -e ".[dev]"
 pytest
 ```
 
+**156 tests** across 8 test files covering all endpoints, bank detection, security, and edge cases.
+
 **Environment variables** (optional — see `.env.example`):
 - `SECRET_KEY` — custom session secret (auto-generated if not set)
 - `DB_PATH` — custom database file path (defaults to `finance.db`)
@@ -107,9 +113,11 @@ pytest
 4. Drag and drop one or more CSV files
 5. Done — duplicates are automatically skipped
 
-**You can import the same file multiple times safely.** The app uses a hash of date + name + amount + account to deduplicate — it will never double-count.
+**You can import the same file multiple times safely.** The app uses a SHA-256 hash of date + name + amount + account to deduplicate — it will never double-count.
 
-**Unknown banks?** If the CSV format isn't recognized, a wizard opens automatically. You map the date, description, and amount columns, name the bank, preview the parsed data, and save. Future imports from that bank are auto-detected.
+**Unknown banks?** If the CSV format isn't recognized, a wizard opens automatically. You map the date, description, and amount columns, name the bank, preview the parsed data, and save. A YAML config is created in `banks/` and future imports auto-detect.
+
+**Re-importing your own exports?** If you export a CSV from CanadaFinance and re-import it (or share it with a friend), the app recognizes its own format and preserves all categories, types, and account names.
 
 ### Monthly routine
 
@@ -128,6 +136,13 @@ The merchant name is saved to your `learned_merchants` database. Next time that 
 
 You can manage or delete learned merchants in **Settings → Learned Merchants**.
 
+### Bulk actions
+
+In the **Transactions** tab, use the checkboxes to select multiple transactions, then:
+- **Categorize** — assign the same category to all selected
+- **Hide** — hide selected transactions from your dashboard
+- **Delete** — remove selected transactions permanently
+
 ### Manual transactions
 
 Click **Add Transaction** in the sidebar for:
@@ -138,6 +153,13 @@ Click **Add Transaction** in the sidebar for:
 ### Setting budgets
 
 Go to **Settings → Monthly Budgets** → pick a category and set your limit. Progress bars appear on the dashboard showing how close you are (green → amber → red).
+
+### Recurring & subscriptions
+
+The dashboard automatically detects merchants that charge you in 3 or more distinct months (Netflix, Spotify, gym membership, etc.) and shows:
+- Average monthly amount
+- Total monthly committed spend
+- Price change warnings (e.g. Netflix went from $16.49 to $17.99)
 
 ### Import rules
 
@@ -169,6 +191,12 @@ Switch to the **Year Review** tab to see:
 - Monthly bar chart comparing income vs. expenses
 - Top 5 spending categories for the year
 
+### Backup & restore
+
+- **Backup:** Settings → Download Backup (downloads your `finance.db` file with a timestamp)
+- **Restore:** Settings → Restore from Backup (upload a `.db` file to overwrite your current data)
+- **Export CSV:** Export tab → download all transactions as CSV (can be re-imported)
+
 ---
 
 ## Data & Privacy
@@ -176,7 +204,9 @@ Switch to the **Year Review** tab to see:
 - All data is stored in `finance.db` — a local SQLite file on your machine
 - Nothing is sent to any server, ever
 - The only external request is loading Google Fonts and Chart.js from CDNs (for the UI)
-- To back up your data: copy `finance.db` somewhere safe
+- Session tokens use SHA-256 and are auto-generated per install
+- CSRF protection on all mutating API endpoints
+- To back up your data: use the in-app backup, or copy `finance.db` somewhere safe
 - To start fresh: delete `finance.db` and restart the app
 
 ---
@@ -184,45 +214,66 @@ Switch to the **Year Review** tab to see:
 ## File Structure
 
 ```
-canadafinance/
+Canada-finance/
 ├── app.py                          ← Entry point
-├── pyproject.toml                  ← Package config (dependencies)
+├── pyproject.toml                  ← Package config and dependencies
+├── requirements.txt                ← Pip dependencies
+├── start.bat                       ← Windows launcher (auto-installs deps)
+├── start.sh                        ← Mac/Linux launcher
+├── canada_finance.spec             ← PyInstaller build config
+├── Dockerfile                      ← Docker container config
+├── .env.example                    ← Environment variable reference
 ├── banks/                          ← YAML bank configs (auto-detect CSV formats)
-│   ├── tangerine_debit.yaml
-│   ├── tangerine_credit.yaml
-│   ├── wealthsimple.yaml
-│   ├── td_chequing.yaml
-│   ├── rbc_chequing.yaml
-│   ├── cibc_chequing.yaml
-│   ├── scotiabank.yaml
 │   ├── bmo_chequing.yaml
-│   └── national_bank.yaml
-├── rules/templates/                ← Rule template presets
+│   ├── canada_finance_export.yaml  ← Recognizes re-imported exports
+│   ├── cibc_chequing.yaml
+│   ├── national_bank.yaml
+│   ├── rbc_chequing.yaml
+│   ├── scotiabank.yaml
+│   ├── tangerine_credit.yaml
+│   ├── tangerine_debit.yaml
+│   ├── td_chequing.yaml
+│   └── wealthsimple.yaml
+├── rules/templates/                ← Import rule presets
 │   ├── default.yaml
 │   ├── freelancer.yaml
 │   ├── student.yaml
 │   ├── self_employed.yaml
 │   └── carpool_commuter.yaml
-├── canada_finance/                 ← App package
-│   ├── __init__.py                 ← Flask app factory
-│   ├── config.py                   ← Paths and config
-│   ├── models/database.py          ← SQLite schema, helpers
-│   ├── routes/                     ← API endpoints
-│   │   ├── main.py                 ← Homepage
-│   │   ├── transactions.py         ← CRUD, search, hide/unhide
-│   │   ├── import_export.py        ← CSV import, export, bank wizard
-│   │   ├── summary.py              ← Dashboard, year review, averages
-│   │   ├── settings.py             ← Budgets, categories, learned, settings
-│   │   └── rules.py                ← Import rules, templates
-│   ├── services/                   ← Business logic
-│   │   ├── categorization.py       ← 300+ keyword → category rules
-│   │   ├── csv_parser.py           ← YAML-driven CSV parsing
+├── canada_finance/                 ← Application package
+│   ├── __init__.py                 ← Flask app factory, CSRF middleware
+│   ├── __main__.py                 ← python -m canada_finance
+│   ├── config.py                   ← Paths and config constants
+│   ├── models/
+│   │   └── database.py             ← SQLite schema, init, tx_hash, migrations
+│   ├── routes/
+│   │   ├── __init__.py             ← Blueprint registration
+│   │   ├── main.py                 ← Homepage, health check
+│   │   ├── transactions.py         ← CRUD, search, pagination, bulk actions, account filter
+│   │   ├── import_export.py        ← CSV import/export, bank wizard, backup/restore
+│   │   ├── summary.py              ← Dashboard, year review, averages, recurring detection
+│   │   ├── settings.py             ← Budgets, categories, learned merchants
+│   │   └── rules.py                ← Import rules CRUD, templates, test/apply
+│   ├── services/
+│   │   ├── categorization.py       ← 300+ keyword → category mapping
+│   │   ├── csv_parser.py           ← YAML-driven CSV parsing engine
 │   │   ├── helpers.py              ← Date parsing, number parsing
-│   │   └── rules_engine.py         ← Rule evaluation and application
-│   ├── templates/index.html        ← Single-page frontend
+│   │   └── rules_engine.py         ← Rule evaluation and transaction saving
+│   ├── templates/
+│   │   └── index.html              ← Single-page HTML shell
 │   └── static/
-│       ├── css/style.css
-│       └── js/app.js
+│       ├── css/style.css           ← Full app styling (dark/light themes)
+│       └── js/app.js               ← Frontend logic (~2000 lines, vanilla JS)
+├── tests/                          ← 156 tests across 8 files
+│   ├── conftest.py                 ← Fixtures, helpers, sample CSV data
+│   ├── test_bank_detection.py      ← Bank YAML detection (10 banks + cross-check)
+│   ├── test_categories.py          ← Category CRUD and cascading
+│   ├── test_import_export.py       ← Import, export, round-trip, backup/restore
+│   ├── test_rules.py               ← Import rules CRUD and evaluation
+│   ├── test_security.py            ← CSRF, path traversal, input validation
+│   ├── test_settings.py            ← Budgets, learned merchants, settings
+│   ├── test_summary.py             ← Summary, year, averages, recurring
+│   └── test_transactions.py        ← CRUD, search, bulk actions, account filter
 └── finance.db                      ← Your data (auto-created, gitignored)
 ```
 
@@ -264,20 +315,74 @@ See existing configs in `banks/` for examples of single-amount vs. debit/credit,
 
 ---
 
+## API Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/health` | Health check |
+| GET | `/api/months` | List months with data |
+| GET | `/api/summary?month=` | Monthly dashboard data |
+| GET | `/api/year/<year>` | Year in review |
+| GET | `/api/averages` | Monthly category averages |
+| GET | `/api/recurring` | Recurring transaction detection |
+| GET | `/api/transactions` | List/filter/search transactions |
+| GET | `/api/accounts` | List distinct bank accounts |
+| POST | `/api/add` | Add a manual transaction |
+| PATCH | `/api/update/<id>` | Update a transaction |
+| DELETE | `/api/delete/<id>` | Delete a transaction |
+| PATCH | `/api/transactions/<id>/hide` | Hide a transaction |
+| PATCH | `/api/transactions/<id>/unhide` | Unhide a transaction |
+| POST | `/api/bulk-delete` | Delete multiple transactions |
+| POST | `/api/bulk-categorize` | Categorize multiple transactions |
+| POST | `/api/bulk-hide` | Hide multiple transactions |
+| POST | `/api/import` | Import CSV files |
+| POST | `/api/detect-csv` | Detect bank from CSV header |
+| POST | `/api/save-bank-config` | Save custom bank config |
+| POST | `/api/preview-parse` | Preview CSV parsing |
+| GET | `/api/export` | Export transactions as CSV |
+| GET | `/api/backup` | Download database backup |
+| POST | `/api/restore` | Restore from backup |
+| GET/POST | `/api/budgets` | Get/set budget limits |
+| GET/POST | `/api/settings` | Get/set app settings |
+| GET | `/api/categories` | List categories |
+| POST | `/api/categories` | Add category |
+| PATCH | `/api/categories/<id>` | Rename category |
+| DELETE | `/api/categories/<id>` | Delete category |
+| GET | `/api/learned` | List learned merchants |
+| DELETE | `/api/learned/<keyword>` | Delete learned merchant |
+| GET/POST | `/api/rules` | Get/create import rules |
+| PATCH | `/api/rules/<id>` | Update rule |
+| DELETE | `/api/rules/<id>` | Delete rule |
+| POST | `/api/rules/reorder` | Reorder rule priorities |
+| POST | `/api/rules/test` | Test rule against existing data |
+| POST | `/api/rules/apply-all` | Apply all rules retroactively |
+| GET | `/api/rule-templates` | List rule templates |
+| POST | `/api/rule-templates/load` | Load a rule template |
+
+---
+
 ## Tech Stack
 
-- **Backend:** Python + Flask (single dependency besides PyYAML)
+- **Backend:** Python 3.9+ / Flask 3.0+
 - **Database:** SQLite (zero config, single file)
 - **Frontend:** Vanilla HTML/CSS/JS — no build step, no npm, no framework
 - **Charts:** Chart.js (loaded from CDN)
 - **Bank configs:** YAML files — easy to add/modify
-- **Total install size:** ~2 MB (Flask + PyYAML + app code)
+- **Security:** CSRF protection, SHA-256 hashing, path traversal guards, input validation
+- **Tests:** pytest — 156 tests, 8 files, covers every endpoint
+- **Total install size:** ~2 MB
 
 ---
 
 ## Contributing
 
 Issues and PRs welcome. Please don't commit any real transaction data.
+
+To run tests:
+```bash
+pip install -e ".[dev]"
+pytest -v
+```
 
 ---
 
