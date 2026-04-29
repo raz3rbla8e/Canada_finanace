@@ -110,7 +110,42 @@ CATEGORY_RULES = {
     "Misc": [
         "detail my ride", "car wash", "car detail", "auto detail", "dry clean",
         "laundromat", "post office", "fedex", "ups", "purolator", "canada post",
-        "storage", "moving",
+        "storage", "moving", "atm withdrawal", "atm deposit",
+        "e-transfer sent", "etransfer sent", "interac e-transfer sent",
+    ],
+    "Rent": [
+        "rent", "landlord", "property management", "tenancy",
+    ],
+    "Savings Transfer": [
+        "transfer to savings", "transfer to tfsa", "transfer to rrsp",
+        "transfer to resp", "transfer to fhsa", "transfer to gic",
+        "savings contribution",
+    ],
+    # ── Income categories ──────────────────────────────────────────────────────
+    "Job": [
+        "payroll", "direct deposit", "salary", "biweekly pay", "semi-monthly pay",
+        "pay stub", "employer", "wages",
+    ],
+    "Freelance": [
+        "freelance", "consulting", "contract pay", "invoice pay", "self-employ",
+        "client payment",
+    ],
+    "Bonus": [
+        "bonus", "incentive", "commission",
+    ],
+    "Refund": [
+        "refund", "rebate", "reimbursement", "credit memo", "cashback",
+        "price adjustment", "return credit",
+    ],
+    "Other Income": [
+        "e-transfer from", "transfer from", "transfer in", "etransfer received",
+        "e-transfer received", "interac e-transfer received",
+        "interest earned", "interest payment", "interest paid",
+        "dividend", "deposit",
+        "gst credit", "gst/hst credit", "hst credit", "trillium",
+        "climate action", "ccb", "child benefit", "canada child",
+        "cerb", "ei payment", "employment insurance",
+        "oas", "old age security", "cpp", "canada pension",
     ],
 }
 
@@ -119,7 +154,9 @@ _PRIORITY_ORDER = [
     "Subscriptions", "Fuel", "Groceries", "Pharmacy", "Healthcare",
     "Phone", "Internet", "Utilities", "Clothing", "Home", "Insurance",
     "Travel", "Education", "Entertainment", "Transport", "Eating Out",
-    "Shopping", "Misc",
+    "Shopping", "Rent", "Savings Transfer", "Misc",
+    # Income categories (checked for credit/positive-amount transactions)
+    "Job", "Freelance", "Bonus", "Refund", "Other Income",
 ]
 
 
