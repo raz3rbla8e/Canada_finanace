@@ -419,7 +419,7 @@ async function submitRuleSuggestions() {
       conditions: [{field: 'description', operator: 'contains', value: desc}],
     });
   });
-  const res = await apiFetch('/api/rules/bulk-create', {method:'POST', body:JSON.stringify({rules})});
+  const res = await apiFetch('/api/rules/bulk-create', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({rules})});
   closeModal('rule-suggest-modal');
   if (res && res.ok) {
     toast(`Created ${res.created} auto-hide rule${res.created!==1?'s':''}`, 'success');
