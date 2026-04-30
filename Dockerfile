@@ -10,6 +10,6 @@ RUN pip install --no-cache-dir .
 
 ENV DEMO_MODE=false
 
-EXPOSE 5000
+EXPOSE 8080
 
-CMD ["python", "app.py"]
+CMD ["gunicorn", "-b", "0.0.0.0:8080", "app:app"]

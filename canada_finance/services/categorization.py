@@ -34,7 +34,7 @@ CATEGORY_RULES = {
     ],
     "Phone": [
         "fido", "koodo", "public mobile", "lucky mobile", "virgin mobile",
-        "bell mobility", "telus mobile", "rogers mobile", "rogers wireless",
+        "bell mobility", "bell canada", "telus mobile", "rogers mobile", "rogers wireless",
         "freedom mobile", "chatr", "phone bill",
     ],
     "Internet": [
