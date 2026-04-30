@@ -86,6 +86,11 @@ def _register_demo_guard(app):
     def demo_guard():
         if not app.config.get("DEMO_MODE"):
             return
+        # Allow dashboard_layout saves in demo mode (display preference, not data)
+        if request.method == "POST" and request.path == "/api/settings":
+            d = request.get_json(silent=True) or {}
+            if set(d.keys()) <= {"dashboard_layout"}:
+                return
         for method, pattern in _DEMO_BLOCKED_COMPILED:
             if request.method == method and pattern.match(request.path):
                 return jsonify({
