@@ -55,27 +55,27 @@
     Settings
   </button>
 
-  <span class="nav-label">Actions</span>
-  <button class="nav-btn" onclick="openAddModal()">
-    <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 8v8M8 12h8"/></svg>
-    Add Transaction
-  </button>
-  <button class="nav-btn" onclick="openTransferModal()">
-    <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M7 16l-4-4m0 0l4-4m-4 4h18M17 8l4 4m0 0l-4 4m4-4H3"/></svg>
-    Transfer
-  </button>
-  <button class="nav-btn" onclick="exportCSV(false)">
-    <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-    Export Month
-  </button>
-  <button class="nav-btn" onclick="exportCSV(true)">
-    <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-    Export All
-  </button>
-  <button class="nav-btn" onclick="openPdfModal()">
-    <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-    Export PDF
-  </button>
+  <div class="quick-actions-wrap">
+    <button class="nav-btn" onclick="toggleQuickActions(event)">
+      <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 8v8M8 12h8"/></svg>
+      Quick Actions
+      <svg class="quick-actions-chevron" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>
+    </button>
+    <div class="quick-actions-popover" id="quick-actions-popover">
+      <button class="quick-action-item" onclick="openAddModal();closeQuickActions()">
+        <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 8v8M8 12h8"/></svg>
+        Add Transaction
+      </button>
+      <button class="quick-action-item" onclick="openTransferModal();closeQuickActions()">
+        <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M7 16l-4-4m0 0l4-4m-4 4h18M17 8l4 4m0 0l-4 4m4-4H3"/></svg>
+        Transfer
+      </button>
+      <button class="quick-action-item" onclick="openExportModal();closeQuickActions()">
+        <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        Export
+      </button>
+    </div>
+  </div>
 
   <div class="sidebar-bottom">
     <div style="display:flex;align-items:center;justify-content:space-between;padding:4px 0">
@@ -113,6 +113,15 @@
     <button class="btn-icon customize-btn" id="dashboard-customize-btn" onclick="openCustomizeModal()" title="Customize dashboard layout">
       <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/></svg>
     </button>
+    <div class="month-menu-wrap">
+      <button class="btn-icon customize-btn" onclick="toggleMonthMenu(event)" title="Export options">
+        <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/></svg>
+      </button>
+      <div class="month-menu-dropdown" id="month-menu-dropdown">
+        <button class="quick-action-item" onclick="openExportModal();closeMonthMenu()">Export this month</button>
+        <button class="quick-action-item" onclick="openExportModal();document.querySelector('input[name=export-scope][value=all]').checked=true;closeMonthMenu()">Export all</button>
+      </div>
+    </div>
   </div>
   <!-- BUDGET ALERTS BANNER -->
   <div id="budget-alerts" class="budget-alerts" style="display:none"></div>
@@ -181,6 +190,7 @@
     </div>
     <div class="panel" data-panel-id="account-balances">
       <div class="panel-title">Account Balances
+        <button class="btn-icon" title="Transfer between accounts" onclick="openTransferModal()">⇄</button>
         <button class="btn-icon" title="Manage accounts" onclick="nav('settings');showAccountsPanel()">⚙</button>
       </div>
       <div id="account-balances-list"><div class="empty">No accounts set up</div></div>
@@ -237,6 +247,9 @@
     <button class="month-btn" onclick="changeYear(-1)">←</button>
     <div class="month-label" id="year-display">—</div>
     <button class="month-btn" onclick="changeYear(1)">→</button>
+    <button class="btn-icon customize-btn" onclick="openExportModal()" title="Export data">
+      <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+    </button>
   </div>
   <div class="cards" style="grid-template-columns:repeat(3,1fr)" id="year-cards"></div>
   <div class="grid2">
@@ -272,153 +285,172 @@
 <section id="sec-settings" class="section">
   <div style="max-width:600px">
 
-    <div class="settings-section">
-      <div class="settings-title">Dashboard Layout</div>
-      <p style="font-size:12px;color:var(--muted);margin-bottom:12px">
-        Choose which panels appear on your dashboard and their order. Drag or use arrows to rearrange.
-      </p>
-      <div id="settings-panel-list"></div>
-      <div style="margin-top:12px">
-        <button class="btn btn-ghost btn-sm" onclick="resetDashboardLayout()">Reset to Default</button>
-      </div>
+    <div class="settings-tabs">
+      <button class="settings-tab active" data-settings-tab="general" onclick="switchSettingsTab('general')">General</button>
+      <button class="settings-tab" data-settings-tab="categories" onclick="switchSettingsTab('categories')">Categories</button>
+      <button class="settings-tab" data-settings-tab="accounts" onclick="switchSettingsTab('accounts')">Accounts</button>
+      <button class="settings-tab" data-settings-tab="import" onclick="switchSettingsTab('import')">Import</button>
     </div>
 
-    <div class="settings-section">
-      <div class="settings-title">Categories</div>
-      <p style="font-size:12px;color:var(--muted);margin-bottom:12px">
-        Manage expense and income categories. Custom categories can be added, renamed, or deleted.
-      </p>
-      <div style="margin-bottom:12px">
-        <div style="font-size:10px;color:var(--muted);letter-spacing:1px;text-transform:uppercase;font-family:var(--mono);margin-bottom:6px">Expense Categories</div>
-        <div id="expense-cat-list"></div>
-      </div>
-      <div style="margin-bottom:12px">
-        <div style="font-size:10px;color:var(--muted);letter-spacing:1px;text-transform:uppercase;font-family:var(--mono);margin-bottom:6px">Income Categories</div>
-        <div id="income-cat-list"></div>
-      </div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-        <input type="text" id="new-cat-name" placeholder="New category name" style="flex:1;min-width:140px">
-        <input type="text" id="new-cat-icon" placeholder="🏷️" style="width:50px;text-align:center" maxlength="2">
-        <select id="new-cat-type" style="width:110px">
-          <option value="Expense">Expense</option>
-          <option value="Income">Income</option>
-        </select>
-        <button class="btn btn-sm" onclick="addCategory()">Add</button>
-      </div>
-    </div>
-
-    <div class="settings-section" id="budget-panel">
-      <div class="settings-title">Monthly Budgets</div>
-      <p style="font-size:12px;color:var(--muted);margin-bottom:12px">
-        Set spending limits per category. Progress bars appear on the dashboard.
-      </p>
-      <div id="budget-list" style="margin-bottom:12px"></div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap">
-        <select id="budget-cat" style="flex:1;min-width:160px">
-          <option value="">Select category…</option>
-        </select>
-        <input type="number" id="budget-amt" placeholder="$" style="width:100px" min="1">
-        <button class="btn btn-sm" onclick="saveBudget()">Set Budget</button>
-      </div>
-    </div>
-
-    <div class="settings-section" id="goals-panel">
-      <div class="settings-title">Savings Goals</div>
-      <p style="font-size:12px;color:var(--muted);margin-bottom:12px">
-        Track progress toward financial goals. Contribute savings manually.
-      </p>
-      <div id="goals-settings-list" style="margin-bottom:12px"></div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap">
-        <input type="text" id="new-goal-name" placeholder="Goal name" style="flex:1;min-width:120px">
-        <input type="number" id="new-goal-target" placeholder="Target $" style="width:100px" min="1" step="0.01">
-        <input type="text" id="new-goal-icon" placeholder="🎯" style="width:50px;text-align:center" maxlength="2">
-        <button class="btn btn-sm" onclick="addGoal()">Add Goal</button>
-      </div>
-    </div>
-
-    <div class="settings-section" id="groups-panel">
-      <div class="settings-title">Category Groups</div>
-      <p style="font-size:12px;color:var(--muted);margin-bottom:12px">
-        Organize expense categories into custom groups. Groups appear in the dashboard spending breakdown.
-      </p>
-      <div id="groups-settings-list" style="margin-bottom:12px"></div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap">
-        <input type="text" id="new-group-name" placeholder="New group name" style="flex:1;min-width:140px">
-        <button class="btn btn-sm" onclick="addGroup()">Add Group</button>
-      </div>
-    </div>
-
-    <div class="settings-section" id="accounts-panel">
-      <div class="settings-title">Accounts</div>
-      <p style="font-size:12px;color:var(--muted);margin-bottom:12px">
-        Track account balances and net worth. Opening balance is your account balance before any imported transactions.
-      </p>
-      <div id="accounts-settings-list" style="margin-bottom:12px"></div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap">
-        <input type="text" id="new-acct-name" placeholder="Account name" style="flex:1;min-width:120px">
-        <select id="new-acct-type" style="width:120px">
-          <option value="chequing">Chequing</option>
-          <option value="savings">Savings</option>
-          <option value="credit">Credit Card</option>
-          <option value="investment">Investment</option>
-          <option value="other">Other</option>
-        </select>
-        <input type="number" id="new-acct-balance" placeholder="Opening $" style="width:100px" step="0.01">
-        <button class="btn btn-sm" onclick="addAccount()">Add Account</button>
-      </div>
-    </div>
-
-    <div class="settings-section" id="schedules-panel">
-      <div class="settings-title">Scheduled Transactions</div>
-      <p style="font-size:12px;color:var(--muted);margin-bottom:12px">
-        Set up recurring transactions to be auto-posted when due. 
-        <button class="btn btn-ghost btn-sm" onclick="postDueSchedules()" style="margin-left:8px">⚡ Post due now</button>
-      </p>
-      <div id="schedules-settings-list" style="margin-bottom:12px"></div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap">
-        <input type="text" id="new-sched-name" placeholder="Name" style="flex:1;min-width:100px">
-        <select id="new-sched-type" style="width:100px" onchange="updateCatOptions('new-sched-cat','new-sched-type')">
-          <option value="Expense">Expense</option>
-          <option value="Income">Income</option>
-        </select>
-        <select id="new-sched-cat" style="width:130px"></select>
-        <input type="number" id="new-sched-amount" placeholder="$" style="width:80px" min="0.01" step="0.01">
-        <select id="new-sched-freq" style="width:110px">
-          <option value="monthly">Monthly</option>
-          <option value="weekly">Weekly</option>
-          <option value="biweekly">Biweekly</option>
-          <option value="yearly">Yearly</option>
-        </select>
-        <input type="date" id="new-sched-due" style="width:140px">
-        <button class="btn btn-sm" onclick="addSchedule()">Add</button>
-      </div>
-    </div>
-
-    <div class="settings-section">
-      <div class="settings-title">Learned Merchants</div>
-      <p style="font-size:12px;color:var(--muted);margin-bottom:12px">
-        Categories you've set manually. Deleted entries revert to auto-categorization.
-      </p>
-      <div id="learned-list"></div>
-    </div>
-
-    <div class="settings-section">
-      <div class="settings-title" style="display:flex;align-items:center;justify-content:space-between">
-        <span>Import Rules</span>
-        <div style="display:flex;gap:6px">
-          <button class="btn btn-ghost btn-sm" onclick="openTemplateModal()">Load Template</button>
-          <button class="btn btn-sm" onclick="openRuleModal()">+ Add Rule</button>
+    <!-- GENERAL TAB -->
+    <div class="settings-tab-pane active" data-tab="general">
+      <div class="settings-section">
+        <div class="settings-title">Dashboard Layout</div>
+        <p style="font-size:12px;color:var(--muted);margin-bottom:12px">
+          Choose which panels appear on your dashboard and their order. Drag or use arrows to rearrange.
+        </p>
+        <div id="settings-panel-list"></div>
+        <div style="margin-top:12px">
+          <button class="btn btn-ghost btn-sm" onclick="resetDashboardLayout()">Reset to Default</button>
         </div>
       </div>
-      <p style="font-size:12px;color:var(--muted);margin-bottom:12px">
-        Rules run on CSV import to automatically hide, label, or force-show transactions. First match wins by priority.
-        All matching is case-insensitive. At equal priority, more specific rules (more conditions) are evaluated first.
-        Use ▲/▼ to reorder.
-      </p>
-      <div style="margin-bottom:12px">
-        <button class="btn btn-ghost btn-sm" onclick="applyAllRules()">⚡ Apply Rules to All Existing Transactions</button>
+    </div>
+
+    <!-- CATEGORIES TAB -->
+    <div class="settings-tab-pane" data-tab="categories">
+      <div class="settings-section">
+        <div class="settings-title">Categories</div>
+        <p style="font-size:12px;color:var(--muted);margin-bottom:12px">
+          Manage expense and income categories. Custom categories can be added, renamed, or deleted.
+        </p>
+        <div style="margin-bottom:12px">
+          <div style="font-size:10px;color:var(--muted);letter-spacing:1px;text-transform:uppercase;font-family:var(--mono);margin-bottom:6px">Expense Categories</div>
+          <div id="expense-cat-list"></div>
+        </div>
+        <div style="margin-bottom:12px">
+          <div style="font-size:10px;color:var(--muted);letter-spacing:1px;text-transform:uppercase;font-family:var(--mono);margin-bottom:6px">Income Categories</div>
+          <div id="income-cat-list"></div>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+          <input type="text" id="new-cat-name" placeholder="New category name" style="flex:1;min-width:140px">
+          <input type="text" id="new-cat-icon" placeholder="🏷️" style="width:50px;text-align:center" maxlength="2">
+          <select id="new-cat-type" style="width:110px">
+            <option value="Expense">Expense</option>
+            <option value="Income">Income</option>
+          </select>
+          <button class="btn btn-sm" onclick="addCategory()">Add</button>
+        </div>
       </div>
-      <div id="rules-list"></div>
+
+      <div class="settings-section" id="budget-panel">
+        <div class="settings-title">Monthly Budgets</div>
+        <p style="font-size:12px;color:var(--muted);margin-bottom:12px">
+          Set spending limits per category. Progress bars appear on the dashboard.
+        </p>
+        <div id="budget-list" style="margin-bottom:12px"></div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <select id="budget-cat" style="flex:1;min-width:160px">
+            <option value="">Select category…</option>
+          </select>
+          <input type="number" id="budget-amt" placeholder="$" style="width:100px" min="1">
+          <button class="btn btn-sm" onclick="saveBudget()">Set Budget</button>
+        </div>
+      </div>
+
+      <div class="settings-section" id="groups-panel">
+        <div class="settings-title">Category Groups</div>
+        <p style="font-size:12px;color:var(--muted);margin-bottom:12px">
+          Organize expense categories into custom groups. Groups appear in the dashboard spending breakdown.
+        </p>
+        <div id="groups-settings-list" style="margin-bottom:12px"></div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <input type="text" id="new-group-name" placeholder="New group name" style="flex:1;min-width:140px">
+          <button class="btn btn-sm" onclick="addGroup()">Add Group</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ACCOUNTS TAB -->
+    <div class="settings-tab-pane" data-tab="accounts">
+      <div class="settings-section" id="accounts-panel">
+        <div class="settings-title">Accounts</div>
+        <p style="font-size:12px;color:var(--muted);margin-bottom:12px">
+          Track account balances and net worth. Opening balance is your account balance before any imported transactions.
+        </p>
+        <div id="accounts-settings-list" style="margin-bottom:12px"></div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <input type="text" id="new-acct-name" placeholder="Account name" style="flex:1;min-width:120px">
+          <select id="new-acct-type" style="width:120px">
+            <option value="chequing">Chequing</option>
+            <option value="savings">Savings</option>
+            <option value="credit">Credit Card</option>
+            <option value="investment">Investment</option>
+            <option value="other">Other</option>
+          </select>
+          <input type="number" id="new-acct-balance" placeholder="Opening $" style="width:100px" step="0.01">
+          <button class="btn btn-sm" onclick="addAccount()">Add Account</button>
+        </div>
+      </div>
+
+      <div class="settings-section" id="schedules-panel">
+        <div class="settings-title">Scheduled Transactions</div>
+        <p style="font-size:12px;color:var(--muted);margin-bottom:12px">
+          Set up recurring transactions to be auto-posted when due. 
+          <button class="btn btn-ghost btn-sm" onclick="postDueSchedules()" style="margin-left:8px">⚡ Post due now</button>
+        </p>
+        <div id="schedules-settings-list" style="margin-bottom:12px"></div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <input type="text" id="new-sched-name" placeholder="Name" style="flex:1;min-width:100px">
+          <select id="new-sched-type" style="width:100px" onchange="updateCatOptions('new-sched-cat','new-sched-type')">
+            <option value="Expense">Expense</option>
+            <option value="Income">Income</option>
+          </select>
+          <select id="new-sched-cat" style="width:130px"></select>
+          <input type="number" id="new-sched-amount" placeholder="$" style="width:80px" min="0.01" step="0.01">
+          <select id="new-sched-freq" style="width:110px">
+            <option value="monthly">Monthly</option>
+            <option value="weekly">Weekly</option>
+            <option value="biweekly">Biweekly</option>
+            <option value="yearly">Yearly</option>
+          </select>
+          <input type="date" id="new-sched-due" style="width:140px">
+          <button class="btn btn-sm" onclick="addSchedule()">Add</button>
+        </div>
+      </div>
+
+      <div class="settings-section" id="goals-panel">
+        <div class="settings-title">Savings Goals</div>
+        <p style="font-size:12px;color:var(--muted);margin-bottom:12px">
+          Track progress toward financial goals. Contribute savings manually.
+        </p>
+        <div id="goals-settings-list" style="margin-bottom:12px"></div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <input type="text" id="new-goal-name" placeholder="Goal name" style="flex:1;min-width:120px">
+          <input type="number" id="new-goal-target" placeholder="Target $" style="width:100px" min="1" step="0.01">
+          <input type="text" id="new-goal-icon" placeholder="🎯" style="width:50px;text-align:center" maxlength="2">
+          <button class="btn btn-sm" onclick="addGoal()">Add Goal</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- IMPORT TAB -->
+    <div class="settings-tab-pane" data-tab="import">
+      <div class="settings-section">
+        <div class="settings-title">Learned Merchants</div>
+        <p style="font-size:12px;color:var(--muted);margin-bottom:12px">
+          Categories you've set manually. Deleted entries revert to auto-categorization.
+        </p>
+        <div id="learned-list"></div>
+      </div>
+
+      <div class="settings-section">
+        <div class="settings-title" style="display:flex;align-items:center;justify-content:space-between">
+          <span>Import Rules</span>
+          <div style="display:flex;gap:6px">
+            <button class="btn btn-ghost btn-sm" onclick="openTemplateModal()">Load Template</button>
+            <button class="btn btn-sm" onclick="openRuleModal()">+ Add Rule</button>
+          </div>
+        </div>
+        <p style="font-size:12px;color:var(--muted);margin-bottom:12px">
+          Rules run on CSV import to automatically hide, label, or force-show transactions. First match wins by priority.
+          All matching is case-insensitive. At equal priority, more specific rules (more conditions) are evaluated first.
+          Use ▲/▼ to reorder.
+        </p>
+        <div style="margin-bottom:12px">
+          <button class="btn btn-ghost btn-sm" onclick="applyAllRules()">⚡ Apply Rules to All Existing Transactions</button>
+        </div>
+        <div id="rules-list"></div>
+      </div>
     </div>
 
   </div>
@@ -710,21 +742,40 @@
   </div>
 </div>
 
-<!-- PDF EXPORT MODAL -->
-<div class="modal-backdrop" id="pdf-modal">
-  <div class="modal" style="width:380px">
-    <div class="modal-title">Export PDF Report</div>
-    <p style="font-size:12px;color:var(--muted);margin-bottom:14px">
-      Generate a PDF report for the currently selected month.
-    </p>
-    <div class="form-group" style="margin-bottom:12px">
+<!-- EXPORT MODAL -->
+<div class="modal-backdrop" id="export-modal">
+  <div class="modal" style="width:400px">
+    <div class="modal-title">Export</div>
+    <div class="form-group" style="margin-bottom:14px">
+      <label>Format</label>
+      <div style="display:flex;gap:12px;margin-top:6px">
+        <label style="display:flex;align-items:center;gap:6px;text-transform:none;letter-spacing:0;font-size:13px;color:var(--text);cursor:pointer">
+          <input type="radio" name="export-format" value="csv" checked onchange="onExportFormatChange()"> CSV
+        </label>
+        <label style="display:flex;align-items:center;gap:6px;text-transform:none;letter-spacing:0;font-size:13px;color:var(--text);cursor:pointer">
+          <input type="radio" name="export-format" value="pdf" onchange="onExportFormatChange()"> PDF
+        </label>
+      </div>
+    </div>
+    <div class="form-group" style="margin-bottom:14px" id="export-scope-group">
+      <label>Scope</label>
+      <div style="display:flex;gap:12px;margin-top:6px">
+        <label style="display:flex;align-items:center;gap:6px;text-transform:none;letter-spacing:0;font-size:13px;color:var(--text);cursor:pointer">
+          <input type="radio" name="export-scope" value="month" checked> This Month
+        </label>
+        <label style="display:flex;align-items:center;gap:6px;text-transform:none;letter-spacing:0;font-size:13px;color:var(--text);cursor:pointer">
+          <input type="radio" name="export-scope" value="all" id="export-scope-all"> All Time
+        </label>
+      </div>
+    </div>
+    <div class="form-group" style="margin-bottom:12px;display:none" id="export-pdf-options">
       <label style="display:flex;align-items:center;gap:8px;text-transform:none;letter-spacing:0;font-size:13px;color:var(--text);cursor:pointer">
-        <input type="checkbox" id="pdf-include-txns"> Include full transaction list
+        <input type="checkbox" id="export-include-txns"> Include full transaction list
       </label>
     </div>
     <div class="form-actions">
-      <button class="btn btn-ghost" onclick="closeModal('pdf-modal')">Cancel</button>
-      <button class="btn" onclick="exportPdf()">Download PDF</button>
+      <button class="btn btn-ghost" onclick="closeModal('export-modal')">Cancel</button>
+      <button class="btn" onclick="doExport()">Download</button>
     </div>
   </div>
 </div>

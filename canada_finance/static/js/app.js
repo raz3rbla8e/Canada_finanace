@@ -119,6 +119,90 @@ function saveDashboardLayout(layout) {
     body: JSON.stringify({dashboard_layout: JSON.stringify(layout)})});
 }
 
+// ── COLLAPSIBLE PANELS ────────────────────────────────────────────────────────
+function initCollapsiblePanels() {
+  const container = document.getElementById('dashboard-panels');
+  if (!container) return;
+  const collapsed = JSON.parse(localStorage.getItem('panelCollapsed') || '{}');
+  container.querySelectorAll('.panel[data-panel-id]').forEach(panel => {
+    const title = panel.querySelector('.panel-title');
+    if (!title || title.querySelector('.panel-collapse-chevron')) return;
+    // Add chevron
+    const chevron = document.createElement('span');
+    chevron.className = 'panel-collapse-chevron';
+    chevron.textContent = '▾';
+    title.insertBefore(chevron, title.firstChild);
+    // Restore collapsed state
+    if (collapsed[panel.dataset.panelId]) panel.classList.add('panel-collapsed');
+    // Click handler on title
+    title.addEventListener('click', function(e) {
+      // Don't collapse if clicking a button inside the title
+      if (e.target.closest('button')) return;
+      panel.classList.toggle('panel-collapsed');
+      const state = JSON.parse(localStorage.getItem('panelCollapsed') || '{}');
+      state[panel.dataset.panelId] = panel.classList.contains('panel-collapsed');
+      localStorage.setItem('panelCollapsed', JSON.stringify(state));
+    });
+  });
+}
+
+// ── AUTO-HIDE EMPTY PANELS ────────────────────────────────────────────────────
+function autoHideEmptyPanels() {
+  const container = document.getElementById('dashboard-panels');
+  if (!container) return;
+  container.querySelectorAll('.panel[data-panel-id]').forEach(panel => {
+    const id = panel.dataset.panelId;
+    // Skip user-hidden panels (they're already hidden via customize)
+    if (panel.classList.contains('panel-hidden')) return;
+    let hasData = true;
+    switch(id) {
+      case 'spending-by-category': {
+        const el = document.getElementById('cat-list');
+        hasData = el && el.children.length > 0 && !el.querySelector(':scope > .empty:only-child');
+        break;
+      }
+      case 'donut-chart':
+        hasData = !!donutChart;
+        break;
+      case 'averages': {
+        const el = document.getElementById('averages-list');
+        hasData = el && el.children.length > 0 && !el.querySelector(':scope > .empty:only-child');
+        break;
+      }
+      case 'recent-txns': {
+        const el = document.getElementById('recent-txns');
+        hasData = el && el.children.length > 0 && !el.querySelector('.empty');
+        break;
+      }
+      case 'recurring': {
+        const el = document.getElementById('recurring-list');
+        hasData = el && el.children.length > 0 && !el.querySelector(':scope > .empty:only-child');
+        break;
+      }
+      case 'spending-trends':
+        hasData = !!trendsChart;
+        break;
+      case 'savings-goals': {
+        const el = document.getElementById('goals-dashboard-list');
+        hasData = el && el.children.length > 0 && !el.querySelector(':scope > .empty:only-child');
+        break;
+      }
+      case 'net-worth': {
+        const wrap = panel.querySelector('.chart-wrap');
+        hasData = wrap && !wrap.querySelector('.empty') && !!document.getElementById('net-worth-chart');
+        break;
+      }
+      case 'account-balances': {
+        const el = document.getElementById('account-balances-list');
+        hasData = el && el.children.length > 0 && !el.querySelector(':scope > .empty:only-child');
+        break;
+      }
+    }
+    if (hasData) panel.classList.remove('panel-auto-hidden');
+    else panel.classList.add('panel-auto-hidden');
+  });
+}
+
 function openCustomizeModal() {
   renderCustomizeList('customize-panel-list');
   document.getElementById('customize-modal').classList.add('open');
@@ -255,6 +339,10 @@ function applyDemoRestrictions() {
       btn.classList.add('demo-disabled');
       btn.setAttribute('onclick', "toast('Import is disabled in demo mode','error')");
     }
+  });
+  // Disable quick action items that are blocked in demo mode
+  document.querySelectorAll('.quick-action-item').forEach(btn => {
+    const onclick = btn.getAttribute('onclick') || '';
     if (onclick.includes('openAddModal')) {
       btn.classList.add('demo-disabled');
       btn.setAttribute('onclick', "toast('Adding transactions is disabled in demo mode','error')");
@@ -375,6 +463,7 @@ async function init() {
   document.getElementById('empty-state').style.display = 'none';
   document.getElementById('dashboard-content').style.display = '';
   applyDashboardLayout();
+  initCollapsiblePanels();
   currentMonthIdx = 0;
   document.getElementById('f-date').value = new Date().toISOString().slice(0,10);
   populateCatFilter();
@@ -410,12 +499,15 @@ async function renderMonth() {
   renderDonut(summary.by_category);
   renderRecentTxns(txns.filter(t=>t.type==='Expense').slice(0,6));
   renderBudgetAlerts(summary.by_category);
-  if (isPanelVisible('averages')) renderAverages();
-  if (isPanelVisible('recurring')) renderRecurring();
-  if (isPanelVisible('spending-trends')) renderTrends();
-  if (isPanelVisible('savings-goals')) renderGoalsDashboard();
-  if (isPanelVisible('net-worth')) renderNetWorth();
-  if (isPanelVisible('account-balances')) renderAccountBalances();
+  const renderPromises = [];
+  if (isPanelVisible('averages')) renderPromises.push(renderAverages());
+  if (isPanelVisible('recurring')) renderPromises.push(renderRecurring());
+  if (isPanelVisible('spending-trends')) renderPromises.push(renderTrends());
+  if (isPanelVisible('savings-goals')) renderPromises.push(renderGoalsDashboard());
+  if (isPanelVisible('net-worth')) renderPromises.push(renderNetWorth());
+  if (isPanelVisible('account-balances')) renderPromises.push(renderAccountBalances());
+  await Promise.all(renderPromises);
+  autoHideEmptyPanels();
   if (document.getElementById('sec-transactions').classList.contains('active')) loadTransactions();
 }
 
@@ -905,8 +997,9 @@ async function deleteLearned(keyword) {
 }
 
 function showBudgetPanel() {
+  switchSettingsTab('categories');
   const el = document.getElementById('budget-panel');
-  el.scrollIntoView({behavior:'smooth'});
+  setTimeout(() => el.scrollIntoView({behavior:'smooth'}), 50);
 }
 
 // ── MODALS ────────────────────────────────────────────────────────────────────
@@ -1572,8 +1665,17 @@ function nav(id) {
   if (id==='dashboard' && document.getElementById('empty-state').style.display !== 'none') refreshDashboard();
   if (id==='transactions') { loadTransactions(); setTimeout(applyDemoToTransactions, 100); }
   if (id==='year') renderYear();
-  if (id==='settings') { loadSettings(); setTimeout(applyDemoToSettings, 200); }
+  if (id==='settings') { loadSettings(); switchSettingsTab(localStorage.getItem('settingsTab')||'general'); setTimeout(applyDemoToSettings, 200); }
   if (id==='import') applyDemoToImport();
+}
+
+// ── SETTINGS TABS ─────────────────────────────────────────────────────────────
+function switchSettingsTab(tabName) {
+  const validTabs = ['general','categories','accounts','import'];
+  if (!validTabs.includes(tabName)) tabName = 'general';
+  document.querySelectorAll('.settings-tab').forEach(t => t.classList.toggle('active', t.dataset.settingsTab === tabName));
+  document.querySelectorAll('.settings-tab-pane').forEach(p => p.classList.toggle('active', p.dataset.tab === tabName));
+  localStorage.setItem('settingsTab', tabName);
 }
 
 async function refreshDashboard() {
@@ -1582,6 +1684,7 @@ async function refreshDashboard() {
     document.getElementById('empty-state').style.display = 'none';
     document.getElementById('dashboard-content').style.display = '';
     applyDashboardLayout();
+    initCollapsiblePanels();
     currentMonthIdx = 0;
     renderMonth();
   }
@@ -1767,8 +1870,9 @@ async function deleteGoal(id) {
 }
 
 function showGoalsPanel() {
+  switchSettingsTab('accounts');
   const el = document.getElementById('goals-panel');
-  if (el) el.scrollIntoView({behavior:'smooth'});
+  if (el) setTimeout(() => el.scrollIntoView({behavior:'smooth'}), 50);
 }
 
 // ── CATEGORY GROUPS (Settings) ────────────────────────────────────────────────
@@ -1876,17 +1980,84 @@ async function submitSplit() {
 
 // ── PDF EXPORT ────────────────────────────────────────────────────────────────
 function openPdfModal() {
-  document.getElementById('pdf-include-txns').checked = false;
-  document.getElementById('pdf-modal').classList.add('open');
+  openExportModal('pdf');
 }
 
 function exportPdf() {
   if (!months.length) return toast('No data to export','error');
   const m = months[currentMonthIdx];
-  const incTxns = document.getElementById('pdf-include-txns').checked ? '1' : '0';
+  const incTxns = document.getElementById('export-include-txns').checked ? '1' : '0';
   window.open(`/api/export/pdf?month=${m}&include_transactions=${incTxns}`, '_blank');
-  closeModal('pdf-modal');
+  closeModal('export-modal');
   toast('PDF downloading…','success');
+}
+
+// ── UNIFIED EXPORT MODAL ──────────────────────────────────────────────────────
+function openExportModal(preselect) {
+  // Reset state
+  document.querySelectorAll('input[name="export-format"]').forEach(r => r.checked = (r.value === (preselect || 'csv')));
+  document.querySelectorAll('input[name="export-scope"]').forEach(r => r.checked = (r.value === 'month'));
+  document.getElementById('export-include-txns').checked = false;
+  onExportFormatChange();
+  document.getElementById('export-modal').classList.add('open');
+}
+
+function onExportFormatChange() {
+  const fmt = document.querySelector('input[name="export-format"]:checked').value;
+  const scopeGroup = document.getElementById('export-scope-group');
+  const pdfOpts = document.getElementById('export-pdf-options');
+  if (fmt === 'pdf') {
+    // PDF is always single month — disable "All Time" and force "This Month"
+    document.getElementById('export-scope-all').disabled = true;
+    document.querySelector('input[name="export-scope"][value="month"]').checked = true;
+    pdfOpts.style.display = '';
+  } else {
+    document.getElementById('export-scope-all').disabled = false;
+    pdfOpts.style.display = 'none';
+  }
+}
+
+function doExport() {
+  const fmt = document.querySelector('input[name="export-format"]:checked').value;
+  const scope = document.querySelector('input[name="export-scope"]:checked').value;
+  if (fmt === 'pdf') {
+    exportPdf();
+  } else {
+    const allTime = scope === 'all';
+    exportCSV(allTime);
+    closeModal('export-modal');
+  }
+}
+
+// ── QUICK ACTIONS POPOVER ─────────────────────────────────────────────────────
+function toggleQuickActions(e) {
+  if (e) e.stopPropagation();
+  const wrap = document.querySelector('.quick-actions-wrap');
+  wrap.classList.toggle('open');
+}
+
+function closeQuickActions() {
+  const wrap = document.querySelector('.quick-actions-wrap');
+  if (wrap) wrap.classList.remove('open');
+}
+
+// Close quick actions when clicking outside
+document.addEventListener('click', function(e) {
+  const wrap = document.querySelector('.quick-actions-wrap');
+  if (wrap && !wrap.contains(e.target)) wrap.classList.remove('open');
+  const menuWrap = document.querySelector('.month-menu-wrap');
+  if (menuWrap && !menuWrap.contains(e.target)) menuWrap.classList.remove('open');
+});
+
+// ── MONTH HEADER MENU ─────────────────────────────────────────────────────────
+function toggleMonthMenu(e) {
+  if (e) e.stopPropagation();
+  document.querySelector('.month-menu-wrap').classList.toggle('open');
+}
+
+function closeMonthMenu() {
+  const wrap = document.querySelector('.month-menu-wrap');
+  if (wrap) wrap.classList.remove('open');
 }
 
 // ── NET WORTH ─────────────────────────────────────────────────────────────────
@@ -2001,8 +2172,9 @@ async function deleteAccount(id) {
 }
 
 function showAccountsPanel() {
+  switchSettingsTab('accounts');
   const el = document.getElementById('accounts-panel');
-  if (el) el.scrollIntoView({behavior:'smooth'});
+  if (el) setTimeout(() => el.scrollIntoView({behavior:'smooth'}), 50);
 }
 
 // ── SCHEDULED TRANSACTIONS SETTINGS ───────────────────────────────────────────
