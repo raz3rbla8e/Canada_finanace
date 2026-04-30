@@ -293,7 +293,7 @@ function applyDemoToSettings() {
   const templateBtn = document.querySelector('#sec-settings .btn[onclick="openTemplateModal()"]');
   if (templateBtn) { templateBtn.classList.add('demo-disabled'); templateBtn.setAttribute('onclick', "toast('Disabled in demo mode','error')"); }
   // Hide category rename/delete buttons
-  document.querySelectorAll('#sec-settings .btn-icon').forEach(btn => {
+  document.querySelectorAll('#expense-cat-list .btn-icon, #income-cat-list .btn-icon').forEach(btn => {
     const onclick = btn.getAttribute('onclick') || '';
     if (onclick.includes('renameCategory') || onclick.includes('deleteCategory')) {
       btn.style.display = 'none';
