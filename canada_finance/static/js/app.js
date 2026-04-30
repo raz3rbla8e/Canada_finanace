@@ -52,6 +52,7 @@ async function apiFetch(url, opts = {}) {
 let EXPENSE_CATS = [];
 let INCOME_CATS = [];
 let ALL_CATEGORIES = [];
+let isDemo = false;
 const PALETTE = ["#6ee7b7","#f59e0b","#60a5fa","#a78bfa","#f87171","#34d399",
   "#fbbf24","#818cf8","#fb7185","#4ade80","#e879f9","#38bdf8","#fb923c","#a3e635"];
 
@@ -69,12 +70,114 @@ async function loadCategories() {
 function toggleTheme() {
   const dark = document.getElementById('theme-toggle').checked;
   document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
+  if (isDemo) return; // Don't save theme in demo mode
   apiFetch('/api/settings', {method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({theme: dark ? 'dark' : 'light'})});
 }
 
+// ── DEMO MODE ─────────────────────────────────────────────────────────────────
+function applyDemoRestrictions() {
+  // Disable sidebar buttons that are blocked in demo mode
+  document.querySelectorAll('.nav-btn').forEach(btn => {
+    const onclick = btn.getAttribute('onclick') || '';
+    if (onclick.includes("nav('import')")) {
+      btn.classList.add('demo-disabled');
+      btn.setAttribute('onclick', "toast('Import is disabled in demo mode','error')");
+    }
+    if (onclick.includes('openAddModal')) {
+      btn.classList.add('demo-disabled');
+      btn.setAttribute('onclick', "toast('Adding transactions is disabled in demo mode','error')");
+    }
+  });
+  // Disable the import drop zone on page load
+  applyDemoToImport();
+}
+
+function applyDemoToTransactions() {
+  if (!isDemo) return;
+  // Hide delete buttons (inline X) in transaction rows
+  document.querySelectorAll('.del-btn').forEach(el => el.style.display = 'none');
+  // Hide bulk delete button
+  const bulkDel = document.querySelector('#bulk-toolbar .btn-sm[onclick="bulkDelete()"]');
+  if (bulkDel) bulkDel.style.display = 'none';
+  // Disable inline "+ Add" button in filter row
+  const addBtn = document.querySelector('#sec-transactions .filter-row .btn-sm[onclick="openAddModal()"]');
+  if (addBtn) {
+    addBtn.classList.add('demo-disabled');
+    addBtn.setAttribute('onclick', "toast('Adding transactions is disabled in demo mode','error')");
+  }
+}
+
+function applyDemoToEditModal() {
+  if (!isDemo) return;
+  // Hide delete button in edit modal
+  const delBtn = document.querySelector('#edit-modal .btn-red');
+  if (delBtn) delBtn.style.display = 'none';
+}
+
+function applyDemoToSettings() {
+  if (!isDemo) return;
+  // Disable add category button
+  const addCatBtn = document.querySelector('#sec-settings .btn[onclick="addCategory()"]');
+  if (addCatBtn) { addCatBtn.classList.add('demo-disabled'); addCatBtn.setAttribute('onclick', "toast('Disabled in demo mode','error')"); }
+  // Disable set budget button
+  const budgetBtn = document.querySelector('#sec-settings .btn[onclick="saveBudget()"]');
+  if (budgetBtn) { budgetBtn.classList.add('demo-disabled'); budgetBtn.setAttribute('onclick', "toast('Disabled in demo mode','error')"); }
+  // Disable add rule button
+  const addRuleBtn = document.querySelector('#sec-settings .btn[onclick="openRuleModal()"]');
+  if (addRuleBtn) { addRuleBtn.classList.add('demo-disabled'); addRuleBtn.setAttribute('onclick', "toast('Disabled in demo mode','error')"); }
+  // Disable load template button
+  const templateBtn = document.querySelector('#sec-settings .btn[onclick="openTemplateModal()"]');
+  if (templateBtn) { templateBtn.classList.add('demo-disabled'); templateBtn.setAttribute('onclick', "toast('Disabled in demo mode','error')"); }
+  // Hide category rename/delete buttons
+  document.querySelectorAll('#sec-settings .btn-icon').forEach(btn => {
+    const onclick = btn.getAttribute('onclick') || '';
+    if (onclick.includes('renameCategory') || onclick.includes('deleteCategory')) {
+      btn.style.display = 'none';
+    }
+  });
+  // Hide budget remove buttons
+  document.querySelectorAll('#budget-list .btn-red').forEach(btn => btn.style.display = 'none');
+  // Hide learned merchant remove buttons
+  document.querySelectorAll('#learned-list .btn-ghost').forEach(btn => {
+    const onclick = btn.getAttribute('onclick') || '';
+    if (onclick.includes('deleteLearned')) btn.style.display = 'none';
+  });
+}
+
+function applyDemoToImport() {
+  if (!isDemo) return;
+  const dropZone = document.getElementById('drop-zone');
+  if (dropZone) {
+    dropZone.classList.add('demo-disabled');
+    dropZone.setAttribute('onclick', '');
+    dropZone.querySelector('strong').textContent = 'Import is disabled in demo mode';
+    dropZone.querySelector('p').textContent = 'Download the app to import your own bank data.';
+  }
+}
+
+async function resetDemo() {
+  if (!confirm('Reset all demo data to its original state?')) return;
+  const res = await fetch('/api/demo/reset', {method:'POST'});
+  if (res.ok) {
+    toast('Demo data reset ✓', 'success');
+    setTimeout(() => location.reload(), 500);
+  } else {
+    toast('Reset failed', 'error');
+  }
+}
+
 // ── INIT ──────────────────────────────────────────────────────────────────────
 async function init() {
+  // Check demo mode
+  const demoRes = await apiFetch('/api/demo');
+  if (demoRes && demoRes.demo) {
+    isDemo = true;
+    document.getElementById('demo-banner').style.display = 'flex';
+    document.title = '[Demo] CanadaFinance';
+    applyDemoRestrictions();
+  }
+
   // Load categories from DB
   await loadCategories();
 
@@ -282,6 +385,7 @@ async function loadTransactions() {
   empty.style.display='none';
   tbody.innerHTML = renderTxnRows(txns);
   if (loadMoreBtn) loadMoreBtn.style.display = hasMore ? '' : 'none';
+  applyDemoToTransactions();
 }
 
 function renderTxnRows(txns) {
@@ -630,6 +734,7 @@ function updateCatOptions(selId, typeId) {
 }
 
 function openAddModal() {
+  if (isDemo) { toast('Adding transactions is disabled in demo mode', 'error'); return; }
   updateCatOptions('f-category','f-type');
   document.getElementById('add-modal').classList.add('open');
 }
@@ -646,6 +751,7 @@ function openEditModal(t) {
   const acc = document.getElementById('e-account');
   for (let o of acc.options) if (o.value===t.account) { o.selected=true; break; }
   document.getElementById('edit-modal').classList.add('open');
+  applyDemoToEditModal();
 }
 
 function closeModal(id) { document.getElementById(id).classList.remove('open'); }
@@ -1257,9 +1363,10 @@ function nav(id) {
     if (b.getAttribute('onclick')?.includes(`'${id}'`)) b.classList.add('active');
   });
   if (id==='dashboard' && document.getElementById('empty-state').style.display !== 'none') refreshDashboard();
-  if (id==='transactions') loadTransactions();
+  if (id==='transactions') { loadTransactions(); setTimeout(applyDemoToTransactions, 100); }
   if (id==='year') renderYear();
-  if (id==='settings') loadSettings();
+  if (id==='settings') { loadSettings(); setTimeout(applyDemoToSettings, 200); }
+  if (id==='import') applyDemoToImport();
 }
 
 async function refreshDashboard() {
