@@ -3,6 +3,7 @@ import sqlite3
 from flask import Blueprint, jsonify, request
 
 from canada_finance.models.database import get_db, tx_hash
+from canada_finance.routes.accounts import save_undo
 
 transactions_bp = Blueprint("transactions", __name__)
 
@@ -96,6 +97,8 @@ def api_update(tid):
     db = get_db()
     db.row_factory = sqlite3.Row
     original = db.execute("SELECT * FROM transactions WHERE id=?", (tid,)).fetchone()
+    if original:
+        save_undo(db, "update", {"id": tid, "old": dict(original)})
     db.execute(f"UPDATE transactions SET {sets} WHERE id=?", vals)
     retro_fixed = 0
     if "category" in d and original:
@@ -122,6 +125,9 @@ def api_update(tid):
 @transactions_bp.route("/api/delete/<int:tid>", methods=["DELETE"])
 def api_delete(tid):
     db = get_db()
+    row = db.execute("SELECT * FROM transactions WHERE id=?", (tid,)).fetchone()
+    if row:
+        save_undo(db, "delete", dict(row))
     db.execute("DELETE FROM transactions WHERE id=?", (tid,))
     db.commit()
     return jsonify({"ok": True})
@@ -167,6 +173,9 @@ def api_bulk_delete():
         return jsonify({"error": "No IDs provided"}), 400
     db = get_db()
     placeholders = ",".join("?" * len(ids))
+    rows = db.execute(f"SELECT * FROM transactions WHERE id IN ({placeholders})", ids).fetchall()
+    if rows:
+        save_undo(db, "bulk_delete", [dict(r) for r in rows])
     db.execute(f"DELETE FROM transactions WHERE id IN ({placeholders})", ids)
     db.commit()
     return jsonify({"ok": True, "deleted": len(ids)})

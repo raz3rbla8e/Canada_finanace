@@ -3,8 +3,13 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#6ee7b7">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <title>CanadaFinance</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🍁</text></svg>">
+<link rel="manifest" href="{{ url_for('static', filename='manifest.json') }}">
+<link rel="apple-touch-icon" href="{{ url_for('static', filename='icons/icon-192.png') }}">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
@@ -54,6 +59,10 @@
   <button class="nav-btn" onclick="openAddModal()">
     <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 8v8M8 12h8"/></svg>
     Add Transaction
+  </button>
+  <button class="nav-btn" onclick="openTransferModal()">
+    <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M7 16l-4-4m0 0l4-4m-4 4h18M17 8l4 4m0 0l-4 4m4-4H3"/></svg>
+    Transfer
   </button>
   <button class="nav-btn" onclick="exportCSV(false)">
     <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
@@ -166,6 +175,16 @@
       </div>
       <div id="goals-dashboard-list"><div class="empty">No goals set</div></div>
     </div>
+    <div class="panel" data-panel-id="net-worth">
+      <div class="panel-title">Net Worth</div>
+      <div class="chart-wrap"><canvas id="net-worth-chart"></canvas></div>
+    </div>
+    <div class="panel" data-panel-id="account-balances">
+      <div class="panel-title">Account Balances
+        <button class="btn-icon" title="Manage accounts" onclick="nav('settings');showAccountsPanel()">⚙</button>
+      </div>
+      <div id="account-balances-list"><div class="empty">No accounts set up</div></div>
+    </div>
   </div>
   </div>
 </section>
@@ -241,10 +260,10 @@
       ondragleave="this.classList.remove('drag')"
       ondrop="handleDrop(event)">
       <div class="file-icon">📂</div>
-      <strong>Drop CSV files here</strong>
-      <p>Tangerine · Wealthsimple · TD · RBC · CIBC · Scotiabank · BMO · National Bank</p>
+      <strong>Drop CSV or OFX/QFX files here</strong>
+      <p>Tangerine · Wealthsimple · TD · RBC · CIBC · Scotiabank · BMO · National Bank · OFX/QFX</p>
     </div>
-    <input type="file" id="csv-input" multiple accept=".csv" style="display:none" onchange="handleFiles(this.files)">
+    <input type="file" id="csv-input" multiple accept=".csv,.ofx,.qfx" style="display:none" onchange="handleFiles(this.files)">
     <div class="import-results" id="import-results"></div>
   </div>
 </section>
@@ -326,6 +345,52 @@
       <div style="display:flex;gap:8px;flex-wrap:wrap">
         <input type="text" id="new-group-name" placeholder="New group name" style="flex:1;min-width:140px">
         <button class="btn btn-sm" onclick="addGroup()">Add Group</button>
+      </div>
+    </div>
+
+    <div class="settings-section" id="accounts-panel">
+      <div class="settings-title">Accounts</div>
+      <p style="font-size:12px;color:var(--muted);margin-bottom:12px">
+        Track account balances and net worth. Opening balance is your account balance before any imported transactions.
+      </p>
+      <div id="accounts-settings-list" style="margin-bottom:12px"></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <input type="text" id="new-acct-name" placeholder="Account name" style="flex:1;min-width:120px">
+        <select id="new-acct-type" style="width:120px">
+          <option value="chequing">Chequing</option>
+          <option value="savings">Savings</option>
+          <option value="credit">Credit Card</option>
+          <option value="investment">Investment</option>
+          <option value="other">Other</option>
+        </select>
+        <input type="number" id="new-acct-balance" placeholder="Opening $" style="width:100px" step="0.01">
+        <button class="btn btn-sm" onclick="addAccount()">Add Account</button>
+      </div>
+    </div>
+
+    <div class="settings-section" id="schedules-panel">
+      <div class="settings-title">Scheduled Transactions</div>
+      <p style="font-size:12px;color:var(--muted);margin-bottom:12px">
+        Set up recurring transactions to be auto-posted when due. 
+        <button class="btn btn-ghost btn-sm" onclick="postDueSchedules()" style="margin-left:8px">⚡ Post due now</button>
+      </p>
+      <div id="schedules-settings-list" style="margin-bottom:12px"></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <input type="text" id="new-sched-name" placeholder="Name" style="flex:1;min-width:100px">
+        <select id="new-sched-type" style="width:100px" onchange="updateCatOptions('new-sched-cat','new-sched-type')">
+          <option value="Expense">Expense</option>
+          <option value="Income">Income</option>
+        </select>
+        <select id="new-sched-cat" style="width:130px"></select>
+        <input type="number" id="new-sched-amount" placeholder="$" style="width:80px" min="0.01" step="0.01">
+        <select id="new-sched-freq" style="width:110px">
+          <option value="monthly">Monthly</option>
+          <option value="weekly">Weekly</option>
+          <option value="biweekly">Biweekly</option>
+          <option value="yearly">Yearly</option>
+        </select>
+        <input type="date" id="new-sched-due" style="width:140px">
+        <button class="btn btn-sm" onclick="addSchedule()">Add</button>
       </div>
     </div>
 
@@ -680,8 +745,36 @@
   </div>
 </div>
 
+<!-- TRANSFER MODAL -->
+<div class="modal-backdrop" id="transfer-modal">
+  <div class="modal" style="width:400px">
+    <div class="modal-title">Transfer Between Accounts</div>
+    <div class="form-grid">
+      <div class="form-group"><label>Date</label><input type="date" id="t-date"></div>
+      <div class="form-group"><label>Amount ($)</label>
+        <input type="number" id="t-amount" step="0.01" min="0.01" placeholder="0.00">
+      </div>
+      <div class="form-group"><label>From Account</label>
+        <select id="t-from"></select>
+      </div>
+      <div class="form-group"><label>To Account</label>
+        <select id="t-to"></select>
+      </div>
+      <div class="form-group full"><label>Notes (optional)</label>
+        <input type="text" id="t-notes" placeholder="e.g. Rent savings transfer">
+      </div>
+    </div>
+    <div class="form-actions">
+      <button class="btn btn-ghost" onclick="closeModal('transfer-modal')">Cancel</button>
+      <button class="btn" onclick="submitTransfer()">Transfer</button>
+    </div>
+  </div>
+</div>
+
 <div class="toast" id="toast"></div>
+<button class="btn btn-ghost btn-sm" id="undo-btn" style="display:none;position:fixed;bottom:20px;right:20px;z-index:1000;background:var(--card);border:1px solid var(--border);padding:8px 16px;border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.3)" onclick="doUndo()">↩ Undo</button>
 
 <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+<script>if('serviceWorker' in navigator){navigator.serviceWorker.register('/static/sw.js')}</script>
 </body>
 </html>

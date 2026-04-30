@@ -83,6 +83,16 @@ _DEMO_BLOCKED = [
     ("POST",   r"^/api/category-groups$"),
     ("PATCH",  r"^/api/category-groups/\d+$"),
     ("DELETE", r"^/api/category-groups/\d+$"),
+    ("POST",   r"^/api/accounts-list$"),
+    ("PATCH",  r"^/api/accounts-list/\d+$"),
+    ("DELETE", r"^/api/accounts-list/\d+$"),
+    ("POST",   r"^/api/schedules$"),
+    ("PATCH",  r"^/api/schedules/\d+$"),
+    ("DELETE", r"^/api/schedules/\d+$"),
+    ("POST",   r"^/api/schedules/post-due$"),
+    ("POST",   r"^/api/transfers$"),
+    ("POST",   r"^/api/undo$"),
+    ("POST",   r"^/api/import-ofx$"),
 ]
 
 _DEMO_BLOCKED_COMPILED = [(m, re.compile(p)) for m, p in _DEMO_BLOCKED]

@@ -144,11 +144,66 @@ def _migrate_v4(db):
     db.execute("UPDATE categories SET group_id=2 WHERE type='Expense' AND group_id IS NULL")
 
 
+def _migrate_v5(db):
+    """Add accounts table for balance tracking."""
+    db.executescript("""
+        CREATE TABLE IF NOT EXISTS accounts (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            name            TEXT NOT NULL UNIQUE,
+            account_type    TEXT NOT NULL DEFAULT 'chequing'
+                            CHECK(account_type IN ('chequing','savings','credit','investment','other')),
+            opening_balance REAL NOT NULL DEFAULT 0,
+            created_at      TEXT DEFAULT (datetime('now'))
+        );
+    """)
+
+
+def _migrate_v6(db):
+    """Add scheduled_transactions table."""
+    db.executescript("""
+        CREATE TABLE IF NOT EXISTS scheduled_transactions (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            name        TEXT NOT NULL,
+            type        TEXT NOT NULL CHECK(type IN ('Income','Expense')),
+            category    TEXT NOT NULL,
+            amount      REAL NOT NULL CHECK(amount > 0),
+            account     TEXT NOT NULL,
+            frequency   TEXT NOT NULL DEFAULT 'monthly'
+                        CHECK(frequency IN ('weekly','biweekly','monthly','yearly')),
+            next_due    TEXT NOT NULL,
+            enabled     INTEGER DEFAULT 1,
+            created_at  TEXT DEFAULT (datetime('now'))
+        );
+    """)
+
+
+def _migrate_v7(db):
+    """Add transfer_id to transactions for linked transfers."""
+    db.execute("ALTER TABLE transactions ADD COLUMN transfer_id INTEGER DEFAULT NULL")
+    db.execute("CREATE INDEX IF NOT EXISTS idx_transfer_id ON transactions(transfer_id)")
+
+
+def _migrate_v8(db):
+    """Add undo_history table for simple undo."""
+    db.executescript("""
+        CREATE TABLE IF NOT EXISTS undo_history (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            action      TEXT NOT NULL,
+            data        TEXT NOT NULL,
+            created_at  TEXT DEFAULT (datetime('now'))
+        );
+    """)
+
+
 MIGRATIONS = [
     (1, "initial schema", _migrate_v1),
     (2, "split transactions", _migrate_v2),
     (3, "savings goals", _migrate_v3),
     (4, "category groups", _migrate_v4),
+    (5, "accounts table", _migrate_v5),
+    (6, "scheduled transactions", _migrate_v6),
+    (7, "transfer linking", _migrate_v7),
+    (8, "undo history", _migrate_v8),
 ]
 
 LATEST_VERSION = MIGRATIONS[-1][0]

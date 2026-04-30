@@ -317,3 +317,113 @@ def api_export_pdf():
     filename = f"finance_report_{month}.pdf"
     return Response(pdf_bytes, mimetype="application/pdf",
                     headers={"Content-Disposition": f"attachment; filename={filename}"})
+
+
+# ── OFX IMPORT ────────────────────────────────────────────────────────────────
+
+def _parse_ofx(text, learned):
+    """Parse OFX/QFX file content into transaction dicts."""
+    from canada_finance.services.categorization import categorize
+
+    transactions = []
+    # Extract account name from OFX if possible
+    acct_match = re.search(r"<ACCTID>([^<\n]+)", text)
+    account = acct_match.group(1).strip() if acct_match else "OFX Import"
+
+    # Find all transaction blocks
+    stmttrn_pattern = re.compile(
+        r"<STMTTRN>(.*?)</STMTTRN>", re.DOTALL | re.IGNORECASE
+    )
+    # Also handle non-closing OFX tags (SGML-style)
+    if not stmttrn_pattern.search(text):
+        stmttrn_pattern = re.compile(
+            r"<STMTTRN>(.*?)(?=<STMTTRN>|</BANKTRANLIST|</STMTRS|$)",
+            re.DOTALL | re.IGNORECASE,
+        )
+
+    for block in stmttrn_pattern.finditer(text):
+        content = block.group(1)
+
+        def _tag(name):
+            m = re.search(rf"<{name}>([^<\n]+)", content, re.IGNORECASE)
+            return m.group(1).strip() if m else ""
+
+        dtposted = _tag("DTPOSTED")
+        trnamt = _tag("TRNAMT")
+        name = _tag("NAME") or _tag("MEMO") or "Unknown"
+        memo = _tag("MEMO") if _tag("NAME") else ""
+
+        if not dtposted or not trnamt:
+            continue
+
+        # Parse date (YYYYMMDD or YYYYMMDDHHMMSS)
+        try:
+            dt = datetime.strptime(dtposted[:8], "%Y%m%d")
+            date_str = dt.strftime("%Y-%m-%d")
+        except ValueError:
+            continue
+
+        # Parse amount
+        try:
+            # Normalize unicode minus signs
+            trnamt = trnamt.replace("\u2212", "-").replace("\u2013", "-").replace("\u2014", "-")
+            amount = float(trnamt)
+        except ValueError:
+            continue
+
+        if amount == 0:
+            continue
+
+        tx_type = "Income" if amount > 0 else "Expense"
+        desc = f"{name} {memo}".strip() if memo else name
+
+        category = categorize(desc, learned)
+
+        transactions.append({
+            "date": date_str,
+            "type": tx_type,
+            "name": desc,
+            "category": category,
+            "amount": abs(amount),
+            "account": account,
+            "notes": "",
+        })
+
+    return transactions
+
+
+@import_export_bp.route("/api/import-ofx", methods=["POST"])
+def api_import_ofx():
+    """Import OFX/QFX bank files."""
+    db = get_db()
+    learned = load_learned_dict(db)
+    results = []
+    for f in request.files.getlist("files"):
+        raw = f.read()
+        try:
+            text = raw.decode("utf-8-sig")
+        except UnicodeDecodeError:
+            try:
+                text = raw.decode("latin-1")
+            except UnicodeDecodeError:
+                results.append({
+                    "file": f.filename, "bank": "OFX", "added": 0, "dupes": 0,
+                    "error": "Unsupported encoding",
+                })
+                continue
+
+        # Validate it looks like OFX
+        if "<OFX" not in text.upper() and "<STMTTRN>" not in text.upper():
+            results.append({
+                "file": f.filename, "bank": "OFX", "added": 0, "dupes": 0,
+                "error": "Not a valid OFX/QFX file",
+            })
+            continue
+
+        txns = _parse_ofx(text, learned)
+        added, dupes = save_transactions(txns)
+        results.append({
+            "file": f.filename, "bank": "OFX Import",
+            "added": added, "dupes": dupes,
+        })
+    return jsonify(results)

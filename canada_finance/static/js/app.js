@@ -68,6 +68,8 @@ const DEFAULT_PANELS = [
   {id: 'recurring', label: 'Recurring & Subscriptions', visible: true},
   {id: 'spending-trends', label: 'Spending Trends', visible: true},
   {id: 'savings-goals', label: 'Savings Goals', visible: true},
+  {id: 'net-worth', label: 'Net Worth', visible: true},
+  {id: 'account-balances', label: 'Account Balances', visible: true},
 ];
 let dashboardLayout = null;
 
@@ -207,6 +209,8 @@ function togglePanelVisibility(panelId, visible) {
     if (panelId === 'recurring') renderRecurring();
     if (panelId === 'spending-trends') renderTrends();
     if (panelId === 'savings-goals') renderGoalsDashboard();
+    if (panelId === 'net-worth') renderNetWorth();
+    if (panelId === 'account-balances') renderAccountBalances();
   }
   refreshAllCustomizeLists();
 }
@@ -380,6 +384,7 @@ async function init() {
   renderMonth();
   loadSettings();
   updateHiddenCount();
+  autoPostSchedules();
 }
 
 const fmt = n => '$' + Math.abs(n).toLocaleString('en-CA',{minimumFractionDigits:2,maximumFractionDigits:2});
@@ -409,6 +414,8 @@ async function renderMonth() {
   if (isPanelVisible('recurring')) renderRecurring();
   if (isPanelVisible('spending-trends')) renderTrends();
   if (isPanelVisible('savings-goals')) renderGoalsDashboard();
+  if (isPanelVisible('net-worth')) renderNetWorth();
+  if (isPanelVisible('account-balances')) renderAccountBalances();
   if (document.getElementById('sec-transactions').classList.contains('active')) loadTransactions();
 }
 
@@ -597,7 +604,7 @@ async function loadMoreTransactions() {
 async function deleteTx(id) {
   if (!confirm('Delete this transaction?')) return;
   await apiFetch(`/api/delete/${id}`, {method:'DELETE'});
-  toast('Deleted','success'); renderMonth(); loadTransactions();
+  toast('Deleted','success'); showUndoButton(); renderMonth(); loadTransactions();
 }
 function filterByCat(cat) {
   nav('transactions');
@@ -638,7 +645,7 @@ function clearSelection() { selectedIds.clear(); document.querySelectorAll('#all
 async function bulkDelete() {
   if (!confirm(`Delete ${selectedIds.size} transaction(s)?`)) return;
   await apiFetch('/api/bulk-delete', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ids:[...selectedIds]})});
-  toast(`Deleted ${selectedIds.size}`,'success'); clearSelection(); renderMonth(); loadTransactions();
+  toast(`Deleted ${selectedIds.size}`,'success'); showUndoButton(); clearSelection(); renderMonth(); loadTransactions();
 }
 async function bulkCategorize() {
   const sel = document.getElementById('bulk-cat-select');
@@ -756,6 +763,8 @@ async function loadSettings() {
   loadRules();
   loadGoalsSettings();
   loadGroupsSettings();
+  loadAccountsSettings();
+  loadSchedulesSettings();
 }
 
 function renderCatRow(c) {
@@ -979,7 +988,7 @@ async function submitEdit() {
 async function deleteFromEdit() {
   if (!confirm('Delete this transaction?')) return;
   await apiFetch(`/api/delete/${document.getElementById('e-id').value}`, {method:'DELETE'});
-  toast('Deleted','success'); closeModal('edit-modal'); renderMonth(); loadTransactions();
+  toast('Deleted','success'); showUndoButton(); closeModal('edit-modal'); renderMonth(); loadTransactions();
 }
 
 // ── IMPORT ────────────────────────────────────────────────────────────────────
@@ -1004,9 +1013,17 @@ async function handleFiles(files) {
   const unknownFiles = [];
   const knownFd = new FormData();
   let hasKnown = false;
+  const ofxFd = new FormData();
+  let hasOfx = false;
 
   // First pass: detect each file
   for (const f of files) {
+    const ext = f.name.toLowerCase().split('.').pop();
+    if (ext === 'ofx' || ext === 'qfx') {
+      ofxFd.append('files', f);
+      hasOfx = true;
+      continue;
+    }
     const detectFd = new FormData();
     detectFd.append('file', f);
     const det = await apiFetch('/api/detect-csv', {method:'POST', body:detectFd});
@@ -1019,11 +1036,22 @@ async function handleFiles(files) {
     }
   }
 
-  // Import known files normally
+  const allResults = [];
+
+  // Import OFX files
+  if (hasOfx) {
+    const data = await apiFetch('/api/import-ofx', {method:'POST', body:ofxFd});
+    if (data) allResults.push(...data);
+  }
+
+  // Import known CSV files normally
   if (hasKnown) {
     const data = await apiFetch('/api/import', {method:'POST', body:knownFd});
-    if (!data) return;
-    const resultsHtml = data.map(r => {
+    if (data) allResults.push(...data);
+  }
+
+  if (allResults.length) {
+    const resultsHtml = allResults.map(r => {
       const staleWarn = isStaleConfig(r.last_verified)
         ? `<div style="color:var(--amber);font-size:10px;font-family:var(--mono)">⚠ config last verified ${escapeHtml(r.last_verified)}</div>` : '';
       return `<div class="result-row">
@@ -1039,7 +1067,7 @@ async function handleFiles(files) {
       document.getElementById('empty-state').style.display = 'none';
       document.getElementById('dashboard-content').style.display = '';
     }
-    toast(`Imported ${data.reduce((s,r)=>s+r.added,0)} transactions`,'success');
+    toast(`Imported ${allResults.reduce((s,r)=>s+r.added,0)} transactions`,'success');
   }
 
   // Open wizard for the first unknown file
@@ -1859,6 +1887,266 @@ function exportPdf() {
   window.open(`/api/export/pdf?month=${m}&include_transactions=${incTxns}`, '_blank');
   closeModal('pdf-modal');
   toast('PDF downloading…','success');
+}
+
+// ── NET WORTH ─────────────────────────────────────────────────────────────────
+let netWorthChart = null;
+
+async function renderNetWorth() {
+  const data = await apiFetch('/api/net-worth');
+  const wrapper = document.querySelector('[data-panel-id="net-worth"] .chart-wrap') ||
+                  document.getElementById('net-worth-chart')?.parentNode;
+  if (!data || !data.length) {
+    if (wrapper) wrapper.innerHTML = '<div class="empty">Add accounts in Settings to see net worth</div>';
+    return;
+  }
+  // Ensure canvas exists (may have been replaced by empty message)
+  if (wrapper && !document.getElementById('net-worth-chart')) {
+    wrapper.innerHTML = '<canvas id="net-worth-chart"></canvas>';
+  }
+  const ctx = document.getElementById('net-worth-chart');
+  if (!ctx) return;
+  if (netWorthChart) netWorthChart.destroy();
+  netWorthChart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: data.map(d => fmtMonth(d.month)),
+      datasets: [{
+        label: 'Net Worth',
+        data: data.map(d => d.net_worth),
+        borderColor: '#6ee7b7',
+        backgroundColor: 'rgba(110,231,183,0.1)',
+        fill: true,
+        tension: 0.3,
+        pointRadius: 4,
+      }],
+    },
+    options: {
+      responsive: true,
+      plugins: {legend:{display:false}},
+      scales: {y:{ticks:{callback:v=>'$'+v.toLocaleString()}}},
+    },
+  });
+}
+
+// ── ACCOUNT BALANCES ──────────────────────────────────────────────────────────
+async function renderAccountBalances() {
+  const data = await apiFetch('/api/accounts-list');
+  const el = document.getElementById('account-balances-list');
+  if (!el) return;
+  if (!data || !data.length) {
+    el.innerHTML = '<div class="empty">Add accounts in Settings to track balances</div>';
+    return;
+  }
+  const total = data.reduce((s,a) => s + a.balance, 0);
+  el.innerHTML = data.map(a => {
+    const color = a.balance >= 0 ? 'var(--accent)' : 'var(--red)';
+    const typeLabel = a.account_type.charAt(0).toUpperCase() + a.account_type.slice(1);
+    return `<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--border)">
+      <div><strong>${escapeHtml(a.name)}</strong> <span style="font-size:10px;color:var(--muted)">${escapeHtml(typeLabel)}</span></div>
+      <div style="font-family:var(--mono);color:${color}">${fmt(a.balance)}</div>
+    </div>`;
+  }).join('') + `<div style="display:flex;justify-content:space-between;padding:8px 0;font-weight:600">
+    <span>Total</span><span style="font-family:var(--mono);color:${total>=0?'var(--accent)':'var(--red)'}">${fmt(total)}</span></div>`;
+}
+
+// ── ACCOUNTS SETTINGS ─────────────────────────────────────────────────────────
+async function loadAccountsSettings() {
+  const data = await apiFetch('/api/accounts-list');
+  const el = document.getElementById('accounts-settings-list');
+  if (!el) return;
+  if (!data || !data.length) {
+    el.innerHTML = '<div style="color:var(--muted);font-size:12px">No accounts</div>';
+    return;
+  }
+  el.innerHTML = data.map(a => `
+    <div class="settings-row">
+      <div style="display:flex;align-items:center;gap:6px;flex:1">
+        <span class="settings-label">${escapeHtml(a.name)}</span>
+        <span style="font-size:10px;color:var(--muted)">${escapeHtml(a.account_type)}</span>
+        <span style="font-size:11px;color:var(--muted);font-family:var(--mono)">Balance: ${fmt(a.balance)}</span>
+      </div>
+      <button class="btn-icon" onclick="deleteAccount(${a.id})">🗑️</button>
+    </div>
+  `).join('');
+}
+
+async function addAccount() {
+  const name = document.getElementById('new-acct-name').value.trim();
+  const account_type = document.getElementById('new-acct-type').value;
+  const opening_balance = document.getElementById('new-acct-balance').value || '0';
+  if (!name) return toast('Enter an account name','error');
+  const res = await apiFetch('/api/accounts-list', {method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({name, account_type, opening_balance: parseFloat(opening_balance)})});
+  if (res && res.ok) {
+    document.getElementById('new-acct-name').value = '';
+    document.getElementById('new-acct-balance').value = '';
+    loadAccountsSettings();
+    renderAccountBalances();
+    renderNetWorth();
+    toast('Account added ✓','success');
+  }
+}
+
+async function deleteAccount(id) {
+  if (!confirm('Delete this account? (Transactions are not affected)')) return;
+  const res = await apiFetch(`/api/accounts-list/${id}`, {method:'DELETE'});
+  if (res && res.ok) {
+    loadAccountsSettings();
+    renderAccountBalances();
+    renderNetWorth();
+    toast('Account deleted ✓','success');
+  }
+}
+
+function showAccountsPanel() {
+  const el = document.getElementById('accounts-panel');
+  if (el) el.scrollIntoView({behavior:'smooth'});
+}
+
+// ── SCHEDULED TRANSACTIONS SETTINGS ───────────────────────────────────────────
+async function loadSchedulesSettings() {
+  const data = await apiFetch('/api/schedules');
+  const el = document.getElementById('schedules-settings-list');
+  if (!el) return;
+  updateCatOptions('new-sched-cat','new-sched-type');
+  if (!data || !data.length) {
+    el.innerHTML = '<div style="color:var(--muted);font-size:12px">No scheduled transactions</div>';
+    return;
+  }
+  el.innerHTML = data.map(s => {
+    const badge = s.enabled ? '' : '<span style="color:var(--red);font-size:10px;margin-left:6px">disabled</span>';
+    return `<div class="settings-row">
+      <div style="display:flex;align-items:center;gap:6px;flex:1">
+        <span class="settings-label">${escapeHtml(s.name)}</span>
+        <span style="font-size:10px;color:var(--muted)">${escapeHtml(s.frequency)} · ${fmt(s.amount)} · due ${escapeHtml(s.next_due)}</span>
+        ${badge}
+      </div>
+      <div style="display:flex;gap:4px">
+        <button class="btn-icon" onclick="toggleSchedule(${s.id},${s.enabled?0:1})">${s.enabled?'⏸':'▶'}</button>
+        <button class="btn-icon" onclick="deleteSchedule(${s.id})">🗑️</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+async function addSchedule() {
+  const name = document.getElementById('new-sched-name').value.trim();
+  const type = document.getElementById('new-sched-type').value;
+  const category = document.getElementById('new-sched-cat').value;
+  const amount = document.getElementById('new-sched-amount').value;
+  const frequency = document.getElementById('new-sched-freq').value;
+  const next_due = document.getElementById('new-sched-due').value;
+  if (!name) return toast('Enter a name','error');
+  if (!amount || parseFloat(amount) <= 0) return toast('Enter a valid amount','error');
+  if (!next_due) return toast('Set a due date','error');
+  // Use a fixed account for now — user can change via edit later
+  const accounts = await apiFetch('/api/accounts') || [];
+  const account = accounts[0] || 'Default';
+  const res = await apiFetch('/api/schedules', {method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({name, type, category, amount: parseFloat(amount), account, frequency, next_due})});
+  if (res && res.ok) {
+    document.getElementById('new-sched-name').value = '';
+    document.getElementById('new-sched-amount').value = '';
+    document.getElementById('new-sched-due').value = '';
+    loadSchedulesSettings();
+    toast('Schedule added ✓','success');
+  }
+}
+
+async function toggleSchedule(id, enabled) {
+  await apiFetch(`/api/schedules/${id}`, {method:'PATCH',
+    headers:{'Content-Type':'application/json'}, body: JSON.stringify({enabled})});
+  loadSchedulesSettings();
+}
+
+async function deleteSchedule(id) {
+  if (!confirm('Delete this schedule?')) return;
+  const res = await apiFetch(`/api/schedules/${id}`, {method:'DELETE'});
+  if (res && res.ok) { loadSchedulesSettings(); toast('Schedule deleted ✓','success'); }
+}
+
+async function postDueSchedules() {
+  const res = await apiFetch('/api/schedules/post-due', {method:'POST',
+    headers:{'Content-Type':'application/json'}, body: '{}'});
+  if (res && res.ok) {
+    loadSchedulesSettings();
+    if (res.posted > 0) {
+      months = await apiFetch('/api/months') || [];
+      if (months.length) renderMonth();
+      toast(`Posted ${res.posted} scheduled transaction(s) ✓`,'success');
+    } else {
+      toast('No transactions due yet','success');
+    }
+  }
+}
+
+// ── TRANSFERS ─────────────────────────────────────────────────────────────────
+function openTransferModal() {
+  document.getElementById('t-date').value = new Date().toISOString().slice(0,10);
+  document.getElementById('t-amount').value = '';
+  document.getElementById('t-notes').value = '';
+  // Populate account dropdowns from known accounts
+  apiFetch('/api/accounts').then(accounts => {
+    const opts = (accounts||[]).map(a => `<option value="${escapeAttr(a)}">${escapeHtml(a)}</option>`).join('');
+    document.getElementById('t-from').innerHTML = opts;
+    document.getElementById('t-to').innerHTML = opts;
+  });
+  document.getElementById('transfer-modal').classList.add('open');
+}
+
+async function submitTransfer() {
+  const from_account = document.getElementById('t-from').value;
+  const to_account = document.getElementById('t-to').value;
+  const amount = document.getElementById('t-amount').value;
+  const date = document.getElementById('t-date').value;
+  const notes = document.getElementById('t-notes').value;
+  if (!from_account || !to_account) return toast('Select both accounts','error');
+  if (from_account === to_account) return toast('Cannot transfer to same account','error');
+  if (!amount || parseFloat(amount) <= 0) return toast('Enter a valid amount','error');
+  const res = await apiFetch('/api/transfers', {method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({from_account, to_account, amount: parseFloat(amount), date, notes})});
+  if (res && res.ok) {
+    closeModal('transfer-modal');
+    toast('Transfer recorded ✓','success');
+    renderAccountBalances();
+    renderNetWorth();
+  }
+}
+
+// ── UNDO ──────────────────────────────────────────────────────────────────────
+let undoTimer = null;
+
+function showUndoButton() {
+  const btn = document.getElementById('undo-btn');
+  if (!btn) return;
+  btn.style.display = '';
+  clearTimeout(undoTimer);
+  undoTimer = setTimeout(() => { btn.style.display = 'none'; }, 10000);
+}
+
+async function doUndo() {
+  const res = await apiFetch('/api/undo', {method:'POST',
+    headers:{'Content-Type':'application/json'}, body: '{}'});
+  if (res && res.ok) {
+    document.getElementById('undo-btn').style.display = 'none';
+    toast('Undo successful ✓','success');
+    months = await apiFetch('/api/months') || [];
+    if (months.length) renderMonth();
+    loadTransactions();
+  }
+}
+
+// ── POST DUE SCHEDULES ON STARTUP ────────────────────────────────────────────
+async function autoPostSchedules() {
+  const res = await apiFetch('/api/schedules/post-due', {method:'POST',
+    headers:{'Content-Type':'application/json'}, body: '{}'});
+  if (res && res.ok && res.posted > 0) {
+    toast(`Auto-posted ${res.posted} scheduled transaction(s)`,'success');
+  }
 }
 
 init();

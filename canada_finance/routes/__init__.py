@@ -4,6 +4,7 @@ from canada_finance.routes.import_export import import_export_bp
 from canada_finance.routes.summary import summary_bp
 from canada_finance.routes.settings import settings_bp
 from canada_finance.routes.rules import rules_bp
+from canada_finance.routes.accounts import accounts_bp
 
 
 def register_blueprints(app):
@@ -13,3 +14,4 @@ def register_blueprints(app):
     app.register_blueprint(summary_bp)
     app.register_blueprint(settings_bp)
     app.register_blueprint(rules_bp)
+    app.register_blueprint(accounts_bp)

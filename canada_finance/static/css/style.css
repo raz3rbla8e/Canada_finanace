@@ -389,3 +389,7 @@ label{font-size:10px;color:var(--muted);letter-spacing:.5px;text-transform:upper
 .group-block{background:var(--surface2);border-radius:8px;padding:10px 12px;margin-bottom:10px}
 .group-block-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;font-weight:500;font-size:13px}
 .group-cat-item{display:flex;align-items:center;gap:6px;font-size:12px;padding:3px 0;color:var(--muted)}
+
+/* Undo Button */
+#undo-btn{animation:slideUp .3s ease}
+@keyframes slideUp{from{transform:translateY(20px);opacity:0}to{transform:translateY(0);opacity:1}}
