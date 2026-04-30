@@ -66,6 +66,8 @@ const DEFAULT_PANELS = [
   {id: 'averages', label: 'Monthly Averages', visible: true},
   {id: 'recent-txns', label: 'Recent Transactions', visible: true},
   {id: 'recurring', label: 'Recurring & Subscriptions', visible: true},
+  {id: 'spending-trends', label: 'Spending Trends', visible: true},
+  {id: 'savings-goals', label: 'Savings Goals', visible: true},
 ];
 let dashboardLayout = null;
 
@@ -203,6 +205,8 @@ function togglePanelVisibility(panelId, visible) {
   if (visible && months.length) {
     if (panelId === 'averages') renderAverages();
     if (panelId === 'recurring') renderRecurring();
+    if (panelId === 'spending-trends') renderTrends();
+    if (panelId === 'savings-goals') renderGoalsDashboard();
   }
   refreshAllCustomizeLists();
 }
@@ -400,8 +404,11 @@ async function renderMonth() {
   renderCatList(summary.by_category);
   renderDonut(summary.by_category);
   renderRecentTxns(txns.filter(t=>t.type==='Expense').slice(0,6));
+  renderBudgetAlerts(summary.by_category);
   if (isPanelVisible('averages')) renderAverages();
   if (isPanelVisible('recurring')) renderRecurring();
+  if (isPanelVisible('spending-trends')) renderTrends();
+  if (isPanelVisible('savings-goals')) renderGoalsDashboard();
   if (document.getElementById('sec-transactions').classList.contains('active')) loadTransactions();
 }
 
@@ -747,6 +754,8 @@ async function loadSettings() {
   loadBudgets();
   loadLearned();
   loadRules();
+  loadGoalsSettings();
+  loadGroupsSettings();
 }
 
 function renderCatRow(c) {
@@ -917,6 +926,8 @@ function openEditModal(t) {
   const acc = document.getElementById('e-account');
   for (let o of acc.options) if (o.value===t.account) { o.selected=true; break; }
   document.getElementById('edit-modal').classList.add('open');
+  document.getElementById('split-section').style.display = 'none';
+  document.getElementById('split-btn').style.display = '';
   applyDemoToEditModal();
 }
 
@@ -1595,5 +1606,259 @@ document.querySelectorAll('.nav-btn').forEach(btn => {
 window.addEventListener('resize', () => {
   if (window.innerWidth > 768) closeMobileMenu();
 });
+
+// ── BUDGET ALERTS ─────────────────────────────────────────────────────────────
+function renderBudgetAlerts(cats) {
+  const el = document.getElementById('budget-alerts');
+  const alerts = cats.filter(c => c.budget && c.total >= c.budget * 0.8);
+  if (!alerts.length) { el.style.display = 'none'; return; }
+  el.style.display = '';
+  el.innerHTML = alerts.map(c => {
+    const pct = Math.round(c.total / c.budget * 100);
+    const cls = pct >= 100 ? 'danger' : 'warning';
+    const icon = pct >= 100 ? '🔴' : '🟡';
+    return `<div class="budget-alert-item ${cls}">
+      <span class="budget-alert-icon">${icon}</span>
+      <strong>${escapeHtml(c.category)}</strong>: ${fmt(c.total)} of ${fmt(c.budget)} budget (${pct}%)
+    </div>`;
+  }).join('');
+}
+
+// ── SPENDING TRENDS ───────────────────────────────────────────────────────────
+let trendsChart = null;
+async function renderTrends() {
+  const data = await apiFetch('/api/trends?months=6');
+  if (!data || !data.length) return;
+  const ctx = document.getElementById('trends-chart').getContext('2d');
+  if (trendsChart) trendsChart.destroy();
+  trendsChart = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: data.map(d => fmtMonth(d.month)),
+      datasets: [
+        { label: 'Income', data: data.map(d => d.income), backgroundColor: '#6ee7b7' },
+        { label: 'Expenses', data: data.map(d => d.expenses), backgroundColor: '#f87171' },
+      ]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      scales: { y: { beginAtZero: true, ticks: { callback: v => '$' + v.toLocaleString() } } },
+      plugins: { legend: { position: 'bottom' } },
+    }
+  });
+}
+
+// ── SAVINGS GOALS (Dashboard) ─────────────────────────────────────────────────
+async function renderGoalsDashboard() {
+  const goals = await apiFetch('/api/goals');
+  const el = document.getElementById('goals-dashboard-list');
+  if (!goals || !goals.length) { el.innerHTML = '<div class="empty">No goals set</div>'; return; }
+  el.innerHTML = goals.map(g => {
+    const pct = Math.min(100, Math.round(g.current_amount / g.target_amount * 100));
+    const cls = pct >= 100 ? 'complete' : '';
+    return `<div class="goal-card">
+      <div class="goal-header">
+        <span class="goal-name">${escapeHtml(g.icon)} ${escapeHtml(g.name)}</span>
+        <span class="goal-amounts">${fmt(g.current_amount)} / ${fmt(g.target_amount)} (${pct}%)</span>
+      </div>
+      <div class="goal-bar-bg"><div class="goal-bar-fill ${cls}" style="width:${pct}%"></div></div>
+      <div class="goal-actions">
+        <button class="btn btn-ghost btn-sm" onclick="openContributeModal(${g.id})">+ Add</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function openContributeModal(gid) {
+  document.getElementById('contribute-goal-id').value = gid;
+  document.getElementById('contribute-amount').value = '';
+  document.getElementById('contribute-modal').classList.add('open');
+}
+
+async function submitContribute() {
+  const gid = document.getElementById('contribute-goal-id').value;
+  const amount = document.getElementById('contribute-amount').value;
+  if (!amount || parseFloat(amount) <= 0) return toast('Enter an amount','error');
+  const res = await apiFetch(`/api/goals/${gid}/contribute`, {method:'POST',
+    headers:{'Content-Type':'application/json'}, body: JSON.stringify({amount: parseFloat(amount)})});
+  if (res && res.ok) {
+    closeModal('contribute-modal');
+    renderGoalsDashboard();
+    loadGoalsSettings();
+    toast('Contribution added ✓','success');
+  }
+}
+
+// ── SAVINGS GOALS (Settings) ──────────────────────────────────────────────────
+async function loadGoalsSettings() {
+  const goals = await apiFetch('/api/goals');
+  const el = document.getElementById('goals-settings-list');
+  if (!goals || !goals.length) { el.innerHTML = '<div style="color:var(--muted);font-size:12px">No goals yet</div>'; return; }
+  el.innerHTML = goals.map(g => {
+    const pct = Math.min(100, Math.round(g.current_amount / g.target_amount * 100));
+    return `<div class="settings-row">
+      <div style="display:flex;align-items:center;gap:6px;flex:1">
+        <span>${escapeHtml(g.icon)}</span>
+        <span class="settings-label">${escapeHtml(g.name)}</span>
+        <span style="font-size:11px;color:var(--muted)">${fmt(g.current_amount)}/${fmt(g.target_amount)} (${pct}%)</span>
+      </div>
+      <div style="display:flex;gap:4px">
+        <button class="btn-icon" onclick="deleteGoal(${g.id})">🗑️</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+async function addGoal() {
+  const name = document.getElementById('new-goal-name').value.trim();
+  const target = document.getElementById('new-goal-target').value;
+  const icon = document.getElementById('new-goal-icon').value.trim() || '🎯';
+  if (!name) return toast('Enter a goal name','error');
+  if (!target || parseFloat(target) <= 0) return toast('Enter a valid target','error');
+  const res = await apiFetch('/api/goals', {method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({name, target_amount: parseFloat(target), icon})});
+  if (res && res.ok) {
+    document.getElementById('new-goal-name').value = '';
+    document.getElementById('new-goal-target').value = '';
+    document.getElementById('new-goal-icon').value = '';
+    loadGoalsSettings();
+    renderGoalsDashboard();
+    toast('Goal added ✓','success');
+  }
+}
+
+async function deleteGoal(id) {
+  if (!confirm('Delete this goal?')) return;
+  const res = await apiFetch(`/api/goals/${id}`, {method:'DELETE'});
+  if (res && res.ok) {
+    loadGoalsSettings();
+    renderGoalsDashboard();
+    toast('Goal deleted ✓','success');
+  }
+}
+
+function showGoalsPanel() {
+  const el = document.getElementById('goals-panel');
+  if (el) el.scrollIntoView({behavior:'smooth'});
+}
+
+// ── CATEGORY GROUPS (Settings) ────────────────────────────────────────────────
+async function loadGroupsSettings() {
+  const groups = await apiFetch('/api/category-groups');
+  const el = document.getElementById('groups-settings-list');
+  if (!groups || !groups.length) { el.innerHTML = '<div style="color:var(--muted);font-size:12px">No groups</div>'; return; }
+  el.innerHTML = groups.filter(g => g.id !== null).map(g => `
+    <div class="group-block">
+      <div class="group-block-header">
+        <span>${escapeHtml(g.name)}</span>
+        <div style="display:flex;gap:4px">
+          <button class="btn-icon" onclick="renameGroup(${g.id},'${escapeAttr(g.name)}')">✏️</button>
+          <button class="btn-icon" onclick="deleteGroup(${g.id})">🗑️</button>
+        </div>
+      </div>
+      ${g.categories.map(c => `<div class="group-cat-item">• ${escapeHtml(c.name)}</div>`).join('')}
+    </div>
+  `).join('');
+}
+
+async function addGroup() {
+  const name = document.getElementById('new-group-name').value.trim();
+  if (!name) return toast('Enter a group name','error');
+  const res = await apiFetch('/api/category-groups', {method:'POST',
+    headers:{'Content-Type':'application/json'}, body: JSON.stringify({name})});
+  if (res && res.ok) {
+    document.getElementById('new-group-name').value = '';
+    loadGroupsSettings();
+    toast('Group added ✓','success');
+  }
+}
+
+async function renameGroup(id, oldName) {
+  const name = prompt('Rename group:', oldName);
+  if (!name || name.trim() === oldName) return;
+  const res = await apiFetch(`/api/category-groups/${id}`, {method:'PATCH',
+    headers:{'Content-Type':'application/json'}, body: JSON.stringify({name: name.trim()})});
+  if (res && res.ok) { loadGroupsSettings(); toast('Group renamed ✓','success'); }
+}
+
+async function deleteGroup(id) {
+  if (!confirm('Delete this group? Categories will become ungrouped.')) return;
+  const res = await apiFetch(`/api/category-groups/${id}`, {method:'DELETE'});
+  if (res && res.ok) { loadGroupsSettings(); toast('Group deleted ✓','success'); }
+}
+
+// ── SPLIT TRANSACTIONS ───────────────────────────────────────────────────────
+function openSplitUI() {
+  const amount = parseFloat(document.getElementById('e-amount').value) || 0;
+  document.getElementById('split-section').style.display = '';
+  document.getElementById('split-btn').style.display = 'none';
+  const rows = document.getElementById('split-rows');
+  rows.innerHTML = '';
+  addSplitRow(Math.round(amount / 2 * 100) / 100);
+  addSplitRow(Math.round((amount - Math.round(amount / 2 * 100) / 100) * 100) / 100);
+  updateSplitRemaining();
+}
+
+function closeSplitUI() {
+  document.getElementById('split-section').style.display = 'none';
+  document.getElementById('split-btn').style.display = '';
+}
+
+function addSplitRow(prefillAmt) {
+  const row = document.createElement('div');
+  row.className = 'split-row';
+  const type = document.getElementById('e-type').value;
+  const cats = type === 'Income' ? INCOME_CATS : EXPENSE_CATS;
+  row.innerHTML = `
+    <select class="split-cat">${cats.map(c => `<option value="${escapeAttr(c)}">${escapeHtml(c)}</option>`).join('')}</select>
+    <input type="number" class="split-amt" step="0.01" min="0" value="${prefillAmt||''}" placeholder="0.00" oninput="updateSplitRemaining()">
+    <button class="btn-icon" onclick="this.closest('.split-row').remove();updateSplitRemaining()">✕</button>
+  `;
+  document.getElementById('split-rows').appendChild(row);
+}
+
+function updateSplitRemaining() {
+  const total = parseFloat(document.getElementById('e-amount').value) || 0;
+  const splits = [...document.querySelectorAll('.split-amt')].map(i => parseFloat(i.value) || 0);
+  const sum = splits.reduce((a, b) => a + b, 0);
+  const remaining = Math.round((total - sum) * 100) / 100;
+  const el = document.getElementById('split-remaining');
+  el.textContent = remaining === 0 ? '✓ Balanced' : `Remaining: ${fmt(remaining)}`;
+  el.style.color = remaining === 0 ? 'var(--accent)' : 'var(--red)';
+}
+
+async function submitSplit() {
+  const tid = document.getElementById('e-id').value;
+  const rows = document.querySelectorAll('.split-row');
+  const splits = [...rows].map(r => ({
+    category: r.querySelector('.split-cat').value,
+    amount: parseFloat(r.querySelector('.split-amt').value) || 0,
+  }));
+  if (splits.length < 2) return toast('Need at least 2 split rows','error');
+  const res = await apiFetch(`/api/transactions/${tid}/split`, {method:'POST',
+    headers:{'Content-Type':'application/json'}, body: JSON.stringify({splits})});
+  if (res && res.ok) {
+    closeModal('edit-modal');
+    toast(`Split into ${res.children} parts ✓`,'success');
+    if (months.length) renderMonth();
+    loadTransactions();
+  }
+}
+
+// ── PDF EXPORT ────────────────────────────────────────────────────────────────
+function openPdfModal() {
+  document.getElementById('pdf-include-txns').checked = false;
+  document.getElementById('pdf-modal').classList.add('open');
+}
+
+function exportPdf() {
+  if (!months.length) return toast('No data to export','error');
+  const m = months[currentMonthIdx];
+  const incTxns = document.getElementById('pdf-include-txns').checked ? '1' : '0';
+  window.open(`/api/export/pdf?month=${m}&include_transactions=${incTxns}`, '_blank');
+  closeModal('pdf-modal');
+  toast('PDF downloading…','success');
+}
 
 init();

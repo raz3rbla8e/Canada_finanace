@@ -173,3 +173,29 @@ def api_recurring():
         "total_monthly_committed": round(total_monthly, 2),
         "count": len(recurring),
     })
+
+
+@summary_bp.route("/api/trends")
+def api_trends():
+    """Monthly income/expense totals for the last N months."""
+    n = request.args.get("months", 6, type=int)
+    n = max(1, min(n, 24))
+    db = get_db()
+    months_rows = db.execute(
+        "SELECT DISTINCT substr(date,1,7) as m FROM transactions WHERE hidden=0 ORDER BY m DESC LIMIT ?",
+        (n,),
+    ).fetchall()
+    result = []
+    for row in reversed(months_rows):
+        m = row["m"]
+        like = f"{m}%"
+        inc = db.execute(
+            "SELECT COALESCE(SUM(amount),0) as t FROM transactions WHERE type='Income' AND hidden=0 AND date LIKE ?",
+            (like,),
+        ).fetchone()["t"]
+        exp = db.execute(
+            "SELECT COALESCE(SUM(amount),0) as t FROM transactions WHERE type='Expense' AND hidden=0 AND date LIKE ?",
+            (like,),
+        ).fetchone()["t"]
+        result.append({"month": m, "income": inc, "expenses": exp, "net": inc - exp})
+    return jsonify(result)

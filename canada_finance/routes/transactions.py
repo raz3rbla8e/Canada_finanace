@@ -264,3 +264,65 @@ def api_suggest_hide_rules():
     ).fetchall()
     suggestions = [{"description": r["name"], "count": r["cnt"]} for r in rows]
     return jsonify({"suggestions": suggestions})
+
+
+# ── SPLIT TRANSACTIONS ────────────────────────────────────────────────────────
+
+@transactions_bp.route("/api/transactions/<int:tid>/split", methods=["POST"])
+def api_split_transaction(tid):
+    """Split a transaction into sub-rows. Body: {splits: [{category, amount}, ...]}"""
+    d = request.json
+    splits = d.get("splits", []) if d else []
+    if len(splits) < 2:
+        return jsonify({"error": "At least 2 split rows required"}), 400
+    db = get_db()
+    parent = db.execute("SELECT * FROM transactions WHERE id=?", (tid,)).fetchone()
+    if not parent:
+        return jsonify({"error": "Transaction not found"}), 404
+    if parent["parent_id"] is not None:
+        return jsonify({"error": "Cannot split a child transaction"}), 400
+    # Validate totals match
+    try:
+        split_total = round(sum(float(s["amount"]) for s in splits), 2)
+    except (ValueError, TypeError, KeyError):
+        return jsonify({"error": "Invalid split data"}), 400
+    if abs(split_total - parent["amount"]) > 0.01:
+        return jsonify({"error": f"Split total ({split_total}) must equal original ({parent['amount']})"}), 400
+    # Remove old children if re-splitting
+    db.execute("DELETE FROM transactions WHERE parent_id=?", (tid,))
+    # Create children
+    for i, s in enumerate(splits):
+        h = tx_hash(parent["date"], f"{parent['name']}__split{i}", float(s["amount"]), parent["account"])
+        db.execute(
+            """INSERT INTO transactions
+               (date, type, name, category, amount, account, notes, source, tx_hash, hidden, parent_id)
+               VALUES (?,?,?,?,?,?,?,?,?,0,?)""",
+            (parent["date"], parent["type"], parent["name"],
+             s.get("category", "UNCATEGORIZED"), float(s["amount"]),
+             parent["account"], s.get("notes", parent["notes"]), parent["source"], h, tid),
+        )
+    # Hide the parent
+    db.execute("UPDATE transactions SET hidden=1 WHERE id=?", (tid,))
+    db.commit()
+    return jsonify({"ok": True, "children": len(splits)})
+
+
+@transactions_bp.route("/api/transactions/<int:tid>/splits")
+def api_get_splits(tid):
+    db = get_db()
+    rows = db.execute(
+        "SELECT * FROM transactions WHERE parent_id=? ORDER BY id", (tid,)
+    ).fetchall()
+    return jsonify([dict(r) for r in rows])
+
+
+@transactions_bp.route("/api/transactions/<int:tid>/unsplit", methods=["DELETE"])
+def api_unsplit_transaction(tid):
+    db = get_db()
+    children = db.execute("SELECT id FROM transactions WHERE parent_id=?", (tid,)).fetchall()
+    if not children:
+        return jsonify({"error": "Transaction is not split"}), 400
+    db.execute("DELETE FROM transactions WHERE parent_id=?", (tid,))
+    db.execute("UPDATE transactions SET hidden=0 WHERE id=?", (tid,))
+    db.commit()
+    return jsonify({"ok": True})

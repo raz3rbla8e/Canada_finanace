@@ -361,3 +361,31 @@ label{font-size:10px;color:var(--muted);letter-spacing:.5px;text-transform:upper
   /* Smaller panel padding */
   .panel{padding:14px 16px}
 }
+
+/* Budget Alerts Banner */
+.budget-alerts{padding:10px 16px;border-radius:8px;margin-bottom:16px;display:flex;flex-direction:column;gap:6px}
+.budget-alert-item{display:flex;align-items:center;gap:8px;font-size:13px;padding:6px 10px;border-radius:6px}
+.budget-alert-item.warning{background:rgba(255,179,0,0.12);border:1px solid rgba(255,179,0,0.3);color:#e6a800}
+.budget-alert-item.danger{background:rgba(239,68,68,0.12);border:1px solid rgba(239,68,68,0.3);color:var(--red)}
+.budget-alert-icon{font-size:16px;flex-shrink:0}
+
+/* Goal Progress Bar */
+.goal-card{background:var(--card);border-radius:8px;padding:12px 14px;margin-bottom:8px}
+.goal-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
+.goal-name{font-size:13px;font-weight:500}
+.goal-amounts{font-size:11px;color:var(--muted)}
+.goal-bar-bg{background:var(--surface2);border-radius:6px;height:8px;overflow:hidden}
+.goal-bar-fill{height:100%;border-radius:6px;background:var(--accent);transition:width .3s ease}
+.goal-bar-fill.complete{background:var(--green,#22c55e)}
+.goal-actions{display:flex;gap:6px;margin-top:6px}
+
+/* Split Rows */
+.split-row{display:flex;gap:8px;align-items:center;margin-bottom:6px}
+.split-row select{flex:1;min-width:100px}
+.split-row input{width:100px}
+.split-row .btn-icon{flex-shrink:0}
+
+/* Groups Settings */
+.group-block{background:var(--surface2);border-radius:8px;padding:10px 12px;margin-bottom:10px}
+.group-block-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;font-weight:500;font-size:13px}
+.group-cat-item{display:flex;align-items:center;gap:6px;font-size:12px;padding:3px 0;color:var(--muted)}

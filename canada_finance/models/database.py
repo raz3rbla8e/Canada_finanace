@@ -101,9 +101,54 @@ def _migrate_v1(db):
 
 # Register migrations in order. Each tuple: (version, description, function).
 # To add a new migration, append to this list:
-#   (2, "add foo column to transactions", _migrate_v2),
+#   (5, "add foo column to transactions", _migrate_v5),
+
+
+def _migrate_v2(db):
+    """Add parent_id to transactions for split transaction support."""
+    db.execute("ALTER TABLE transactions ADD COLUMN parent_id INTEGER DEFAULT NULL")
+    db.execute("CREATE INDEX IF NOT EXISTS idx_parent_id ON transactions(parent_id)")
+
+
+def _migrate_v3(db):
+    """Add savings_goals table."""
+    db.executescript("""
+        CREATE TABLE IF NOT EXISTS savings_goals (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            name        TEXT NOT NULL,
+            target_amount REAL NOT NULL CHECK(target_amount > 0),
+            current_amount REAL NOT NULL DEFAULT 0,
+            icon        TEXT DEFAULT '🎯',
+            created_at  TEXT DEFAULT (datetime('now'))
+        );
+    """)
+
+
+def _migrate_v4(db):
+    """Add category_groups table and group_id to categories."""
+    db.executescript("""
+        CREATE TABLE IF NOT EXISTS category_groups (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            name        TEXT NOT NULL UNIQUE,
+            sort_order  INTEGER DEFAULT 0
+        );
+        INSERT OR IGNORE INTO category_groups (id, name, sort_order) VALUES (1, 'Essentials', 0);
+        INSERT OR IGNORE INTO category_groups (id, name, sort_order) VALUES (2, 'Lifestyle', 1);
+    """)
+    db.execute("ALTER TABLE categories ADD COLUMN group_id INTEGER DEFAULT NULL")
+    # Assign default groups
+    essentials = ('Rent', 'Groceries', 'Utilities', 'Insurance', 'Phone', 'Internet',
+                  'Healthcare', 'Pharmacy', 'Fuel', 'Transport', 'Car Payment')
+    for cat in essentials:
+        db.execute("UPDATE categories SET group_id=1 WHERE name=? AND type='Expense'", (cat,))
+    db.execute("UPDATE categories SET group_id=2 WHERE type='Expense' AND group_id IS NULL")
+
+
 MIGRATIONS = [
     (1, "initial schema", _migrate_v1),
+    (2, "split transactions", _migrate_v2),
+    (3, "savings goals", _migrate_v3),
+    (4, "category groups", _migrate_v4),
 ]
 
 LATEST_VERSION = MIGRATIONS[-1][0]

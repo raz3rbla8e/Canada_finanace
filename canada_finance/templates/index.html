@@ -63,6 +63,10 @@
     <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
     Export All
   </button>
+  <button class="nav-btn" onclick="openPdfModal()">
+    <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+    Export PDF
+  </button>
 
   <div class="sidebar-bottom">
     <div style="display:flex;align-items:center;justify-content:space-between;padding:4px 0">
@@ -101,6 +105,8 @@
       <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/></svg>
     </button>
   </div>
+  <!-- BUDGET ALERTS BANNER -->
+  <div id="budget-alerts" class="budget-alerts" style="display:none"></div>
   <div class="cards">
     <div class="card">
       <div class="card-label">Income</div>
@@ -149,6 +155,16 @@
     <div class="panel" data-panel-id="recurring">
       <div class="panel-title">Recurring & Subscriptions <span id="recurring-subtitle" style="font-size:10px;color:var(--muted);font-weight:normal"></span></div>
       <div id="recurring-list"><div class="empty">Loading…</div></div>
+    </div>
+    <div class="panel" data-panel-id="spending-trends">
+      <div class="panel-title">Spending Trends</div>
+      <div class="chart-wrap"><canvas id="trends-chart"></canvas></div>
+    </div>
+    <div class="panel" data-panel-id="savings-goals">
+      <div class="panel-title">Savings Goals
+        <button class="btn-icon" title="Manage goals" onclick="nav('settings');showGoalsPanel()">⚙</button>
+      </div>
+      <div id="goals-dashboard-list"><div class="empty">No goals set</div></div>
     </div>
   </div>
   </div>
@@ -287,6 +303,32 @@
       </div>
     </div>
 
+    <div class="settings-section" id="goals-panel">
+      <div class="settings-title">Savings Goals</div>
+      <p style="font-size:12px;color:var(--muted);margin-bottom:12px">
+        Track progress toward financial goals. Contribute savings manually.
+      </p>
+      <div id="goals-settings-list" style="margin-bottom:12px"></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <input type="text" id="new-goal-name" placeholder="Goal name" style="flex:1;min-width:120px">
+        <input type="number" id="new-goal-target" placeholder="Target $" style="width:100px" min="1" step="0.01">
+        <input type="text" id="new-goal-icon" placeholder="🎯" style="width:50px;text-align:center" maxlength="2">
+        <button class="btn btn-sm" onclick="addGoal()">Add Goal</button>
+      </div>
+    </div>
+
+    <div class="settings-section" id="groups-panel">
+      <div class="settings-title">Category Groups</div>
+      <p style="font-size:12px;color:var(--muted);margin-bottom:12px">
+        Organize expense categories into custom groups. Groups appear in the dashboard spending breakdown.
+      </p>
+      <div id="groups-settings-list" style="margin-bottom:12px"></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <input type="text" id="new-group-name" placeholder="New group name" style="flex:1;min-width:140px">
+        <button class="btn btn-sm" onclick="addGroup()">Add Group</button>
+      </div>
+    </div>
+
     <div class="settings-section">
       <div class="settings-title">Learned Merchants</div>
       <p style="font-size:12px;color:var(--muted);margin-bottom:12px">
@@ -389,9 +431,26 @@
     </div>
     <div class="form-actions">
       <button class="btn btn-red btn-sm" onclick="deleteFromEdit()">Delete</button>
+      <button class="btn btn-ghost btn-sm" id="split-btn" onclick="openSplitUI()">Split</button>
       <div style="flex:1"></div>
       <button class="btn btn-ghost" onclick="closeModal('edit-modal')">Cancel</button>
       <button class="btn" onclick="submitEdit()">Save</button>
+    </div>
+    <div id="split-section" style="display:none">
+      <div class="settings-title" style="margin-top:12px">Split Transaction</div>
+      <p style="font-size:12px;color:var(--muted);margin-bottom:8px">
+        Split this into sub-rows. The amounts must add up to the original.
+      </p>
+      <div id="split-rows"></div>
+      <div style="display:flex;gap:8px;margin-top:8px">
+        <button class="btn btn-ghost btn-sm" onclick="addSplitRow()">+ Add Row</button>
+        <div style="flex:1"></div>
+        <span id="split-remaining" style="font-size:12px;color:var(--muted);align-self:center"></span>
+      </div>
+      <div class="form-actions" style="margin-top:8px">
+        <button class="btn btn-ghost btn-sm" onclick="closeSplitUI()">Cancel Split</button>
+        <button class="btn btn-sm" onclick="submitSplit()">Confirm Split</button>
+      </div>
     </div>
   </div>
 </div>
@@ -582,6 +641,41 @@
       <button class="btn btn-ghost btn-sm" onclick="resetDashboardLayout()">Reset to Default</button>
       <div style="flex:1"></div>
       <button class="btn" onclick="closeModal('customize-modal')">Done</button>
+    </div>
+  </div>
+</div>
+
+<!-- PDF EXPORT MODAL -->
+<div class="modal-backdrop" id="pdf-modal">
+  <div class="modal" style="width:380px">
+    <div class="modal-title">Export PDF Report</div>
+    <p style="font-size:12px;color:var(--muted);margin-bottom:14px">
+      Generate a PDF report for the currently selected month.
+    </p>
+    <div class="form-group" style="margin-bottom:12px">
+      <label style="display:flex;align-items:center;gap:8px;text-transform:none;letter-spacing:0;font-size:13px;color:var(--text);cursor:pointer">
+        <input type="checkbox" id="pdf-include-txns"> Include full transaction list
+      </label>
+    </div>
+    <div class="form-actions">
+      <button class="btn btn-ghost" onclick="closeModal('pdf-modal')">Cancel</button>
+      <button class="btn" onclick="exportPdf()">Download PDF</button>
+    </div>
+  </div>
+</div>
+
+<!-- CONTRIBUTE MODAL -->
+<div class="modal-backdrop" id="contribute-modal">
+  <div class="modal" style="width:340px">
+    <div class="modal-title">Add to Goal</div>
+    <input type="hidden" id="contribute-goal-id">
+    <div class="form-group" style="margin-bottom:12px">
+      <label>Amount ($)</label>
+      <input type="number" id="contribute-amount" step="0.01" min="0.01" placeholder="0.00">
+    </div>
+    <div class="form-actions">
+      <button class="btn btn-ghost" onclick="closeModal('contribute-modal')">Cancel</button>
+      <button class="btn" onclick="submitContribute()">Add</button>
     </div>
   </div>
 </div>

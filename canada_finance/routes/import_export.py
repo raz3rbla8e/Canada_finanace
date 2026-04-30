@@ -218,3 +218,102 @@ def api_restore():
     with open(DB_PATH, "wb") as out:
         out.write(f.read())
     return jsonify({"ok": True, "message": "Database restored successfully"})
+
+
+@import_export_bp.route("/api/export/pdf")
+def api_export_pdf():
+    """Export a PDF report for a given month."""
+    from fpdf import FPDF
+
+    month = request.args.get("month", "")
+    include_transactions = request.args.get("include_transactions", "0") == "1"
+    if not month:
+        return jsonify({"error": "Month parameter required (YYYY-MM)"}), 400
+
+    db = get_db()
+    like = f"{month}%"
+    income = db.execute(
+        "SELECT COALESCE(SUM(amount),0) as t FROM transactions WHERE type='Income' AND hidden=0 AND date LIKE ?",
+        (like,),
+    ).fetchone()["t"]
+    expenses = db.execute(
+        "SELECT COALESCE(SUM(amount),0) as t FROM transactions WHERE type='Expense' AND hidden=0 AND date LIKE ?",
+        (like,),
+    ).fetchone()["t"]
+    by_cat = db.execute(
+        """SELECT category, SUM(amount) as total FROM transactions
+           WHERE type='Expense' AND hidden=0 AND date LIKE ? GROUP BY category ORDER BY total DESC""",
+        (like,),
+    ).fetchall()
+    budgets = {
+        r["category"]: r["monthly_limit"]
+        for r in db.execute("SELECT category, monthly_limit FROM budgets").fetchall()
+    }
+
+    pdf = FPDF()
+    pdf.set_auto_page_break(auto=True, margin=15)
+    pdf.add_page()
+
+    # Title
+    pdf.set_font("Helvetica", "B", 18)
+    pdf.cell(0, 12, f"Finance Report - {month}", new_x="LMARGIN", new_y="NEXT")
+    pdf.ln(4)
+
+    # Summary box
+    pdf.set_font("Helvetica", "B", 12)
+    pdf.cell(0, 8, "Summary", new_x="LMARGIN", new_y="NEXT")
+    pdf.set_font("Helvetica", "", 11)
+    net = income - expenses
+    savings_rate = round((net / income * 100), 1) if income > 0 else 0
+    pdf.cell(0, 7, f"Income:  ${income:,.2f}", new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(0, 7, f"Expenses:  ${expenses:,.2f}", new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(0, 7, f"Net:  ${net:,.2f}", new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(0, 7, f"Savings Rate:  {savings_rate}%", new_x="LMARGIN", new_y="NEXT")
+    pdf.ln(4)
+
+    # Spending by category table
+    pdf.set_font("Helvetica", "B", 12)
+    pdf.cell(0, 8, "Spending by Category", new_x="LMARGIN", new_y="NEXT")
+    pdf.set_font("Helvetica", "B", 10)
+    pdf.cell(80, 7, "Category", border=1)
+    pdf.cell(40, 7, "Spent", border=1, align="R")
+    pdf.cell(40, 7, "Budget", border=1, align="R")
+    pdf.ln()
+    pdf.set_font("Helvetica", "", 10)
+    for r in by_cat:
+        cat = r["category"]
+        pdf.cell(80, 7, cat[:30], border=1)
+        pdf.cell(40, 7, f"${r['total']:,.2f}", border=1, align="R")
+        budget_val = budgets.get(cat)
+        pdf.cell(40, 7, f"${budget_val:,.2f}" if budget_val else "-", border=1, align="R")
+        pdf.ln()
+    pdf.ln(4)
+
+    # Optional transaction listing
+    if include_transactions:
+        pdf.set_font("Helvetica", "B", 12)
+        pdf.cell(0, 8, "Transactions", new_x="LMARGIN", new_y="NEXT")
+        pdf.set_font("Helvetica", "B", 9)
+        pdf.cell(22, 6, "Date", border=1)
+        pdf.cell(60, 6, "Name", border=1)
+        pdf.cell(35, 6, "Category", border=1)
+        pdf.cell(25, 6, "Amount", border=1, align="R")
+        pdf.cell(20, 6, "Type", border=1)
+        pdf.ln()
+        pdf.set_font("Helvetica", "", 8)
+        rows = db.execute(
+            "SELECT date, name, category, amount, type FROM transactions WHERE hidden=0 AND date LIKE ? ORDER BY date DESC",
+            (like,),
+        ).fetchall()
+        for r in rows:
+            pdf.cell(22, 6, r["date"], border=1)
+            pdf.cell(60, 6, str(r["name"])[:28], border=1)
+            pdf.cell(35, 6, str(r["category"])[:16], border=1)
+            pdf.cell(25, 6, f"${r['amount']:,.2f}", border=1, align="R")
+            pdf.cell(20, 6, r["type"], border=1)
+            pdf.ln()
+
+    pdf_bytes = bytes(pdf.output())
+    filename = f"finance_report_{month}.pdf"
+    return Response(pdf_bytes, mimetype="application/pdf",
+                    headers={"Content-Disposition": f"attachment; filename={filename}"})

@@ -142,7 +142,7 @@ class TestPreMigrationDatabase:
     def test_sets_version_to_1(self, raw_db):
         self._create_pre_migration_db(raw_db)
         run_migrations(raw_db)
-        assert _get_schema_version(raw_db) == 1
+        assert _get_schema_version(raw_db) == 4
 
     def test_preserves_existing_data(self, raw_db):
         self._create_pre_migration_db(raw_db)
@@ -187,19 +187,19 @@ class TestIdempotency:
 class TestFutureMigration:
     def test_new_migration_runs_on_existing_db(self, raw_db):
         run_migrations(raw_db)
-        assert _get_schema_version(raw_db) == 1
+        assert _get_schema_version(raw_db) == 4
 
-        # Simulate a v2 migration that adds a column
-        def _migrate_v2(db):
+        # Simulate a v5 migration that adds a column
+        def _migrate_v5(db):
             db.execute("ALTER TABLE transactions ADD COLUMN label TEXT DEFAULT ''")
 
         from canada_finance.models import database as dbmod
         original = dbmod.MIGRATIONS[:]
         try:
-            dbmod.MIGRATIONS.append((2, "add label column", _migrate_v2))
-            dbmod.LATEST_VERSION = 2
+            dbmod.MIGRATIONS.append((5, "add label column", _migrate_v5))
+            dbmod.LATEST_VERSION = 5
             run_migrations(raw_db)
-            assert _get_schema_version(raw_db) == 2
+            assert _get_schema_version(raw_db) == 5
             # Verify the column exists
             raw_db.execute("SELECT label FROM transactions LIMIT 0")
         finally:
@@ -207,11 +207,11 @@ class TestFutureMigration:
             dbmod.LATEST_VERSION = original[-1][0]
 
     def test_new_migration_skips_already_applied(self, raw_db):
-        """A v2 migration should not run if the DB is already at v2."""
+        """A v5 migration should not run if the DB is already at v5."""
         run_migrations(raw_db)
         call_count = 0
 
-        def _migrate_v2(db):
+        def _migrate_v5(db):
             nonlocal call_count
             call_count += 1
             db.execute("ALTER TABLE transactions ADD COLUMN label TEXT DEFAULT ''")
@@ -219,8 +219,8 @@ class TestFutureMigration:
         from canada_finance.models import database as dbmod
         original = dbmod.MIGRATIONS[:]
         try:
-            dbmod.MIGRATIONS.append((2, "add label column", _migrate_v2))
-            dbmod.LATEST_VERSION = 2
+            dbmod.MIGRATIONS.append((5, "add label column", _migrate_v5))
+            dbmod.LATEST_VERSION = 5
             run_migrations(raw_db)
             assert call_count == 1
             # Run again — should NOT call _migrate_v2
