@@ -2370,7 +2370,6 @@ async function saveEditSchedule(id) {
     body: JSON.stringify({name, category, amount: parseFloat(amount), frequency, next_due})});
   if (res && res.ok) { loadSchedulesSettings(); toast('Schedule updated ✓','success'); }
 }
-}
 
 async function addSchedule() {
   const name = document.getElementById('new-sched-name').value.trim();
