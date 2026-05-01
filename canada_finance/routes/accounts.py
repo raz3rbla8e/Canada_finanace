@@ -28,6 +28,8 @@ def api_accounts_list():
             (a["name"],),
         ).fetchone()["t"]
         balance = a["opening_balance"] + income - expenses
+        if a["account_type"] == "credit":
+            balance = -balance
         result.append({
             "id": a["id"],
             "name": a["name"],
@@ -128,6 +130,8 @@ def api_net_worth():
                 (a["name"], f"{m}-31"),
             ).fetchone()["t"]
             balance = a["opening_balance"] + income - expenses
+            if a["account_type"] == "credit":
+                balance = -balance
             total += balance
         result.append({"month": m, "net_worth": round(total, 2)})
     return jsonify(result)
