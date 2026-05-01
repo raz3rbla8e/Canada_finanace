@@ -544,3 +544,167 @@ class TestMonthContextMenu:
         css = client.get("/static/css/style.css").data.decode()
         assert ".month-menu" in css
         assert ".month-menu-item" in css
+
+
+# ── SCHEDULED TRANSACTION ACCOUNT SELECTOR ───────────────────────────────────
+
+class TestScheduledTransactionAccountSelector:
+    """Scheduled transaction add form should have an account dropdown."""
+
+    def test_account_selector_exists_in_html(self, client):
+        html = client.get("/").data.decode()
+        assert 'id="new-sched-account"' in html
+
+    def test_account_selector_is_select_element(self, client):
+        html = client.get("/").data.decode()
+        assert '<select id="new-sched-account"' in html
+
+    def test_addSchedule_reads_account_selector(self, client):
+        js = client.get("/static/js/app.js").data.decode()
+        assert "new-sched-account" in js
+        assert "getElementById('new-sched-account')" in js
+
+    def test_loadSchedulesSettings_populates_account_dropdown(self, client):
+        js = client.get("/static/js/app.js").data.decode()
+        assert "schedAcctSel" in js or "new-sched-account" in js
+
+    def test_schedule_list_shows_account(self, client):
+        js = client.get("/static/js/app.js").data.decode()
+        assert "s.account" in js
+
+    def test_schedule_api_accepts_account(self, client):
+        client.post("/api/accounts-list", json={"name": "TestAcct", "account_type": "chequing"})
+        res = client.post("/api/schedules", json={
+            "name": "Rent", "type": "Expense", "category": "Rent",
+            "amount": 1500, "account": "TestAcct",
+            "frequency": "monthly", "next_due": "2026-06-01"
+        })
+        assert res.get_json()["ok"]
+        schedules = client.get("/api/schedules").get_json()
+        assert schedules[0]["account"] == "TestAcct"
+
+
+# ── ACCOUNT EDIT/RENAME BUTTON ───────────────────────────────────────────────
+
+class TestAccountEditButton:
+    """Accounts in settings should have edit/rename buttons."""
+
+    def test_editAccount_function_exists(self, client):
+        js = client.get("/static/js/app.js").data.decode()
+        assert "function editAccount(" in js
+
+    def test_editAccount_calls_patch(self, client):
+        js = client.get("/static/js/app.js").data.decode()
+        func_start = js.index("function editAccount(")
+        func_body = js[func_start:func_start + 500]
+        assert "PATCH" in func_body
+        assert "/api/accounts-list/" in func_body
+
+    def test_editAccount_refreshes_dropdowns(self, client):
+        js = client.get("/static/js/app.js").data.decode()
+        func_start = js.index("function editAccount(")
+        func_body = js[func_start:func_start + 600]
+        assert "populateModalAccountDropdowns" in func_body
+
+    def test_account_row_has_edit_button(self, client):
+        js = client.get("/static/js/app.js").data.decode()
+        assert "editAccount(" in js
+        assert "✏️" in js
+
+    def test_rename_account_api_works(self, client):
+        client.post("/api/accounts-list", json={"name": "Old Name", "account_type": "savings"})
+        accounts = client.get("/api/accounts-list").get_json()
+        aid = accounts[0]["id"]
+        res = client.patch(f"/api/accounts-list/{aid}", json={"name": "New Name"})
+        assert res.get_json()["ok"]
+        updated = client.get("/api/accounts-list").get_json()
+        assert updated[0]["name"] == "New Name"
+
+    def test_rename_cascades_to_transactions(self, client):
+        from tests.conftest import seed_transaction
+        client.post("/api/accounts-list", json={"name": "AcctA", "account_type": "chequing"})
+        seed_transaction(client, account="AcctA")
+        accounts = client.get("/api/accounts-list").get_json()
+        client.patch(f"/api/accounts-list/{accounts[0]['id']}", json={"name": "AcctB"})
+        txns = client.get("/api/transactions?month=2026-03").get_json()
+        assert txns[0]["account"] == "AcctB"
+
+
+# ── CATEGORY GROUP REASSIGNMENT ──────────────────────────────────────────────
+
+class TestCategoryGroupReassignment:
+    """Categories within groups should have a dropdown to reassign to another group."""
+
+    def test_reassignCategory_function_exists(self, client):
+        js = client.get("/static/js/app.js").data.decode()
+        assert "function reassignCategory(" in js
+
+    def test_reassignCategory_calls_patch(self, client):
+        js = client.get("/static/js/app.js").data.decode()
+        func_start = js.index("function reassignCategory(")
+        func_body = js[func_start:func_start + 300]
+        assert "PATCH" in func_body
+        assert "/api/categories/" in func_body
+        assert "group_id" in func_body
+
+    def test_group_display_has_reassign_select(self, client):
+        js = client.get("/static/js/app.js").data.decode()
+        assert "group-reassign-select" in js
+        assert "reassignCategory(" in js
+
+    def test_ungrouped_categories_shown(self, client):
+        js = client.get("/static/js/app.js").data.decode()
+        assert "Ungrouped" in js
+
+    def test_reassign_category_via_api(self, client):
+        # Ensure we have two groups with categories
+        groups = client.get("/api/category-groups").get_json()
+        named_groups = [g for g in groups if g["id"] is not None]
+        if len(named_groups) < 2:
+            client.post("/api/category-groups", json={"name": "TestGroup"})
+            groups = client.get("/api/category-groups").get_json()
+            named_groups = [g for g in groups if g["id"] is not None]
+        # Find groups that have categories
+        groups_with_cats = [g for g in named_groups if g["categories"]]
+        if not groups_with_cats:
+            # Assign a category to the first group so we can test moving it
+            cats = client.get("/api/categories").get_json()
+            expense_cat = [c for c in cats if c["type"] == "Expense"][0]
+            client.patch(f"/api/categories/{expense_cat['id']}", json={"group_id": named_groups[0]["id"]})
+            groups = client.get("/api/category-groups").get_json()
+            named_groups = [g for g in groups if g["id"] is not None]
+            groups_with_cats = [g for g in named_groups if g["categories"]]
+        source_group = groups_with_cats[0]
+        target_group = [g for g in named_groups if g["id"] != source_group["id"]][0]
+        cat_id = source_group["categories"][0]["id"]
+        # Move category
+        res = client.patch(f"/api/categories/{cat_id}", json={"group_id": target_group["id"]})
+        assert res.get_json()["ok"]
+        # Verify it moved
+        updated_groups = client.get("/api/category-groups").get_json()
+        target = [g for g in updated_groups if g["id"] == target_group["id"]][0]
+        assert any(c["id"] == cat_id for c in target["categories"])
+
+    def test_reassign_to_ungrouped_via_api(self, client):
+        groups = client.get("/api/category-groups").get_json()
+        named_groups = [g for g in groups if g["id"] is not None]
+        # Ensure at least one group has a category
+        groups_with_cats = [g for g in named_groups if g["categories"]]
+        if not groups_with_cats:
+            cats = client.get("/api/categories").get_json()
+            expense_cat = [c for c in cats if c["type"] == "Expense"][0]
+            client.patch(f"/api/categories/{expense_cat['id']}", json={"group_id": named_groups[0]["id"]})
+            groups = client.get("/api/category-groups").get_json()
+            groups_with_cats = [g for g in groups if g["id"] is not None and g["categories"]]
+        source_group = groups_with_cats[0]
+        cat_id = source_group["categories"][0]["id"]
+        res = client.patch(f"/api/categories/{cat_id}", json={"group_id": None})
+        assert res.get_json()["ok"]
+        # Verify it's now ungrouped
+        updated_groups = client.get("/api/category-groups").get_json()
+        ungrouped = [g for g in updated_groups if g["id"] is None]
+        assert ungrouped and any(c["id"] == cat_id for c in ungrouped[0]["categories"])
+
+    def test_group_options_rendered_for_each_category(self, client):
+        js = client.get("/static/js/app.js").data.decode()
+        assert "groupOptions.map" in js

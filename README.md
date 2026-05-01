@@ -127,7 +127,7 @@ pip install -e ".[dev]"
 pytest
 ```
 
-**480 tests** across 14 test files covering all endpoints, bank detection, security, new features, and edge cases.
+**499 tests** across 14 test files covering all endpoints, bank detection, security, new features, and edge cases.
 
 **Environment variables** (optional — see `.env.example`):
 - `SECRET_KEY` — custom session secret (auto-generated if not set)
@@ -364,7 +364,7 @@ Boreal/
 │       ├── manifest.json           ← PWA manifest for installability
 │       ├── sw.js                   ← Service worker for offline caching
 │       └── icons/                  ← PWA icons (192px, 512px)
-├── tests/                          ← 480 tests across 14 files
+├── tests/                          ← 499 tests across 14 files
 │   ├── conftest.py                 ← Fixtures, helpers, sample CSV data
 │   ├── test_bank_detection.py      ← Bank YAML detection (10 banks + cross-check)
 │   ├── test_categories.py          ← Category CRUD and cascading
@@ -491,7 +491,7 @@ See existing configs in `banks/` for examples of single-amount vs. debit/credit,
 - **Bank configs:** YAML files — easy to add/modify
 - **PWA:** Service worker + manifest for installability and offline support
 - **Security:** CSRF protection, SHA-256 hashing, path traversal guards, input validation
-- **Tests:** pytest — 480 tests, 14 files, covers every endpoint and feature
+- **Tests:** pytest — 499 tests, 14 files, covers every endpoint and feature
 - **Total install size:** ~2 MB
 
 ---

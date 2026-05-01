@@ -1961,6 +1961,8 @@ async function loadGroupsSettings() {
   const groups = await apiFetch('/api/category-groups');
   const el = document.getElementById('groups-settings-list');
   if (!groups || !groups.length) { el.innerHTML = '<div style="color:var(--muted);font-size:12px">No groups</div>'; return; }
+  const allGroups = groups.filter(g => g.id !== null);
+  const groupOptions = allGroups.map(g => ({id: g.id, name: g.name}));
   el.innerHTML = groups.filter(g => g.id !== null).map(g => `
     <div class="group-block">
       <div class="group-block-header">
@@ -1970,9 +1972,29 @@ async function loadGroupsSettings() {
           <button class="btn-icon" onclick="deleteGroup(${g.id})">🗑️</button>
         </div>
       </div>
-      ${g.categories.map(c => `<div class="group-cat-item">• ${escapeHtml(c.name)}</div>`).join('')}
+      ${g.categories.map(c => `<div class="group-cat-item" style="justify-content:space-between">
+        <span>• ${escapeHtml(c.name)}</span>
+        <select class="group-reassign-select" onchange="reassignCategory(${c.id},this.value)" style="font-size:11px;padding:1px 4px;background:var(--surface);color:var(--text);border:1px solid var(--border-subtle);border-radius:4px">
+          ${groupOptions.map(go => `<option value="${go.id}"${go.id===g.id?' selected':''}>${escapeHtml(go.name)}</option>`).join('')}
+          <option value=""${g.id===null?' selected':''}>Ungrouped</option>
+        </select>
+      </div>`).join('')}
     </div>
   `).join('');
+  // Show ungrouped categories if any
+  const ungrouped = groups.find(g => g.id === null);
+  if (ungrouped && ungrouped.categories.length) {
+    el.innerHTML += `<div class="group-block">
+      <div class="group-block-header"><span>Ungrouped</span></div>
+      ${ungrouped.categories.map(c => `<div class="group-cat-item" style="justify-content:space-between">
+        <span>• ${escapeHtml(c.name)}</span>
+        <select class="group-reassign-select" onchange="reassignCategory(${c.id},this.value)" style="font-size:11px;padding:1px 4px;background:var(--surface);color:var(--text);border:1px solid var(--border-subtle);border-radius:4px">
+          ${groupOptions.map(go => `<option value="${go.id}">${escapeHtml(go.name)}</option>`).join('')}
+          <option value="" selected>Ungrouped</option>
+        </select>
+      </div>`).join('')}
+    </div>`;
+  }
 }
 
 async function addGroup() {
@@ -1985,6 +2007,13 @@ async function addGroup() {
     loadGroupsSettings();
     toast('Group added ✓','success');
   }
+}
+
+async function reassignCategory(catId, groupId) {
+  const body = {group_id: groupId === '' ? null : parseInt(groupId)};
+  const res = await apiFetch(`/api/categories/${catId}`, {method:'PATCH',
+    headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+  if (res && res.ok) { loadGroupsSettings(); toast('Category moved ✓','success'); }
 }
 
 async function renameGroup(id, oldName) {
@@ -2161,7 +2190,10 @@ async function loadAccountsSettings() {
         <span style="font-size:10px;color:var(--muted)">${escapeHtml(a.account_type)}</span>
         <span style="font-size:11px;color:var(--muted);font-family:var(--mono)">Balance: ${fmt(a.balance)}</span>
       </div>
-      <button class="btn-icon" onclick="deleteAccount(${a.id})">🗑️</button>
+      <div style="display:flex;gap:4px">
+        <button class="btn-icon" onclick="editAccount(${a.id},'${escapeAttr(a.name)}','${escapeAttr(a.account_type)}',${a.opening_balance})">✏️</button>
+        <button class="btn-icon" onclick="deleteAccount(${a.id})">🗑️</button>
+      </div>
     </div>
   `).join('');
 }
@@ -2181,6 +2213,21 @@ async function addAccount() {
     renderAccountBalances();
     renderNetWorth();
     toast('Account added ✓','success');
+  }
+}
+
+async function editAccount(id, oldName, oldType, oldBalance) {
+  const name = prompt('Rename account:', oldName);
+  if (!name || name.trim() === oldName) return;
+  const res = await apiFetch(`/api/accounts-list/${id}`, {method:'PATCH',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({name: name.trim()})});
+  if (res && res.ok) {
+    loadAccountsSettings();
+    renderAccountBalances();
+    renderNetWorth();
+    populateModalAccountDropdowns(await apiFetch('/api/accounts') || []);
+    toast('Account renamed ✓','success');
   }
 }
 
@@ -2208,6 +2255,12 @@ async function loadSchedulesSettings() {
   const el = document.getElementById('schedules-settings-list');
   if (!el) return;
   updateCatOptions('new-sched-cat','new-sched-type');
+  // Populate account selector
+  const schedAcctSel = document.getElementById('new-sched-account');
+  if (schedAcctSel) {
+    const accts = await apiFetch('/api/accounts') || [];
+    schedAcctSel.innerHTML = accts.map(a => `<option value="${escapeAttr(a)}">${escapeHtml(a)}</option>`).join('');
+  }
   if (!data || !data.length) {
     el.innerHTML = '<div style="color:var(--muted);font-size:12px">No scheduled transactions</div>';
     return;
@@ -2217,7 +2270,7 @@ async function loadSchedulesSettings() {
     return `<div class="settings-row">
       <div style="display:flex;align-items:center;gap:6px;flex:1">
         <span class="settings-label">${escapeHtml(s.name)}</span>
-        <span style="font-size:10px;color:var(--muted)">${escapeHtml(s.frequency)} · ${fmt(s.amount)} · due ${escapeHtml(s.next_due)}</span>
+        <span style="font-size:10px;color:var(--muted)">${escapeHtml(s.frequency)} · ${fmt(s.amount)} · ${escapeHtml(s.account)} · due ${escapeHtml(s.next_due)}</span>
         ${badge}
       </div>
       <div style="display:flex;gap:4px">
@@ -2238,9 +2291,7 @@ async function addSchedule() {
   if (!name) return toast('Enter a name','error');
   if (!amount || parseFloat(amount) <= 0) return toast('Enter a valid amount','error');
   if (!next_due) return toast('Set a due date','error');
-  // Use a fixed account for now — user can change via edit later
-  const accounts = await apiFetch('/api/accounts') || [];
-  const account = accounts[0] || 'Default';
+  const account = document.getElementById('new-sched-account').value || 'Default';
   const res = await apiFetch('/api/schedules', {method:'POST',
     headers:{'Content-Type':'application/json'},
     body: JSON.stringify({name, type, category, amount: parseFloat(amount), account, frequency, next_due})});
