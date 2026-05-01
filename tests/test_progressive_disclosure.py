@@ -1,63 +1,56 @@
 """Tests for progressive disclosure UI rework.
 
-Validates: sidebar quick-actions popover, unified export modal,
-settings tabs, collapsible panels, auto-hide empty panels,
-contextual action buttons.
+Validates: sidebar with collapsible toggle, direct action buttons,
+separate export buttons, PDF modal, flat settings layout,
+collapsible panels, auto-hide empty panels, contextual actions.
 """
 import re
 
 
-# ── PHASE 1: SIDEBAR + EXPORT CONSOLIDATION ──────────────────────────────────
+# ── SIDEBAR LAYOUT ───────────────────────────────────────────────────────────
 
-class TestSidebarQuickActions:
-    """Sidebar should have Quick Actions popover instead of 5 action buttons."""
+class TestSidebarLayout:
+    """Sidebar should have Views + Actions sections with direct buttons."""
 
-    def test_quick_actions_button_exists(self, client):
+    def test_sidebar_has_collapse_toggle(self, client):
         html = client.get("/").data.decode()
-        assert "Quick Actions" in html
-        assert "quick-actions-wrap" in html
+        assert "sidebar-toggle" in html
+        assert "toggleSidebar()" in html
 
-    def test_quick_actions_popover_exists(self, client):
+    def test_sidebar_has_views_label(self, client):
         html = client.get("/").data.decode()
-        assert 'id="quick-actions-popover"' in html
-        assert "quick-actions-popover" in html
+        assert ">Views<" in html
 
-    def test_popover_contains_add_transaction(self, client):
+    def test_sidebar_has_actions_label(self, client):
         html = client.get("/").data.decode()
-        assert "quick-action-item" in html
+        assert ">Actions<" in html
+
+    def test_sidebar_has_add_transaction(self, client):
+        html = client.get("/").data.decode()
         assert "openAddModal()" in html
+        assert "Add Transaction" in html
 
-    def test_popover_contains_transfer(self, client):
+    def test_sidebar_has_transfer(self, client):
         html = client.get("/").data.decode()
         assert "openTransferModal()" in html
+        assert "Transfer" in html
 
-    def test_popover_contains_export(self, client):
+    def test_sidebar_has_export_month(self, client):
         html = client.get("/").data.decode()
-        assert "openExportModal()" in html
+        assert "exportCSV(false)" in html
+        assert "Export Month" in html
 
-    def test_no_separate_export_month_button(self, client):
-        """The old 'Export Month' sidebar button should be gone."""
+    def test_sidebar_has_export_all(self, client):
         html = client.get("/").data.decode()
-        assert "Export Month" not in html
+        assert "exportCSV(true)" in html
+        assert "Export All" in html
 
-    def test_no_separate_export_all_button(self, client):
-        """The old 'Export All' sidebar button should be gone."""
+    def test_sidebar_has_export_pdf(self, client):
         html = client.get("/").data.decode()
-        assert "Export All" not in html
-
-    def test_no_separate_export_pdf_button(self, client):
-        """The old 'Export PDF' sidebar button should be gone."""
-        html = client.get("/").data.decode()
-        assert "Export PDF" not in html
-
-    def test_no_old_actions_label(self, client):
-        """The old 'Actions' nav-label should be removed."""
-        html = client.get("/").data.decode()
-        # Should not have a nav-label that says Actions
-        assert '>Actions<' not in html
+        assert "openPdfModal()" in html
+        assert "Export PDF" in html
 
     def test_views_still_present(self, client):
-        """All 5 navigation views should still be present."""
         html = client.get("/").data.decode()
         assert "Dashboard" in html
         assert "Transactions" in html
@@ -65,247 +58,137 @@ class TestSidebarQuickActions:
         assert "Import CSV" in html
         assert "Settings" in html
 
-    def test_toggle_function_exists(self, client):
-        js = client.get("/static/js/app.js").data.decode()
-        assert "function toggleQuickActions" in js
+    def test_nav_icons_wrapped(self, client):
+        html = client.get("/").data.decode()
+        assert "nav-icon" in html
+        assert "nav-label-text" in html
 
-    def test_close_function_exists(self, client):
-        js = client.get("/static/js/app.js").data.decode()
-        assert "function closeQuickActions" in js
-
-    def test_click_outside_closes(self, client):
-        """Document click listener should close the popover."""
-        js = client.get("/static/js/app.js").data.decode()
-        assert "quick-actions-wrap" in js
-        assert "classList.remove('open')" in js
+    def test_data_tips_for_collapsed_mode(self, client):
+        html = client.get("/").data.decode()
+        assert 'data-tip="Dashboard"' in html
+        assert 'data-tip="Settings"' in html
 
 
-class TestQuickActionsCSS:
-    """CSS for quick actions popover."""
+class TestSidebarCSS:
+    """CSS for collapsible sidebar."""
 
-    def test_popover_styles_exist(self, client):
+    def test_sidebar_toggle_styles(self, client):
         css = client.get("/static/css/style.css").data.decode()
-        assert ".quick-actions-popover" in css
+        assert ".sidebar-toggle" in css
 
-    def test_popover_hidden_by_default(self, client):
+    def test_collapsed_sidebar_width(self, client):
         css = client.get("/static/css/style.css").data.decode()
-        assert re.search(r"\.quick-actions-popover\s*\{[^}]*display:\s*none", css)
+        assert ".sidebar.collapsed" in css
+        assert "--sidebar-w-col" in css
 
-    def test_popover_shown_when_open(self, client):
+    def test_collapsed_hides_labels(self, client):
         css = client.get("/static/css/style.css").data.decode()
-        assert re.search(r"\.quick-actions-wrap\.open\s+\.quick-actions-popover\s*\{[^}]*display:\s*block", css)
+        assert ".sidebar.collapsed .nav-label-text" in css
 
-    def test_quick_action_item_styles(self, client):
+    def test_nav_icon_styles(self, client):
         css = client.get("/static/css/style.css").data.decode()
-        assert ".quick-action-item" in css
+        assert ".nav-icon" in css
 
-    def test_chevron_rotation(self, client):
+    def test_sidebar_bottom_styles(self, client):
         css = client.get("/static/css/style.css").data.decode()
-        assert "quick-actions-chevron" in css
+        assert ".sidebar-bottom-row" in css
+        assert ".sidebar-bottom-label" in css
 
 
-class TestExportModal:
-    """Unified export modal replaces the old PDF modal."""
+# ── PDF MODAL ────────────────────────────────────────────────────────────────
 
-    def test_export_modal_exists(self, client):
+class TestPdfModal:
+    """PDF export modal should work correctly."""
+
+    def test_pdf_modal_exists(self, client):
         html = client.get("/").data.decode()
-        assert 'id="export-modal"' in html
+        assert 'id="pdf-modal"' in html
 
-    def test_no_old_pdf_modal(self, client):
-        """The old pdf-modal should be gone."""
+    def test_pdf_include_transactions_checkbox(self, client):
         html = client.get("/").data.decode()
-        assert 'id="pdf-modal"' not in html
+        assert 'id="pdf-include-txns"' in html
 
-    def test_format_radio_csv(self, client):
-        html = client.get("/").data.decode()
-        assert 'name="export-format"' in html
-        assert 'value="csv"' in html
-
-    def test_format_radio_pdf(self, client):
-        html = client.get("/").data.decode()
-        assert 'value="pdf"' in html
-
-    def test_scope_radio_month(self, client):
-        html = client.get("/").data.decode()
-        assert 'name="export-scope"' in html
-        assert 'value="month"' in html
-
-    def test_scope_radio_all(self, client):
-        html = client.get("/").data.decode()
-        assert 'value="all"' in html
-        assert 'id="export-scope-all"' in html
-
-    def test_include_transactions_checkbox(self, client):
-        html = client.get("/").data.decode()
-        assert 'id="export-include-txns"' in html
-
-    def test_pdf_options_hidden_by_default(self, client):
-        html = client.get("/").data.decode()
-        assert 'id="export-pdf-options"' in html
-        assert 'display:none' in html
-
-    def test_do_export_function(self, client):
-        js = client.get("/static/js/app.js").data.decode()
-        assert "function doExport()" in js
-
-    def test_open_export_modal_function(self, client):
-        js = client.get("/static/js/app.js").data.decode()
-        assert "function openExportModal" in js
-
-    def test_export_format_change_handler(self, client):
-        js = client.get("/static/js/app.js").data.decode()
-        assert "function onExportFormatChange" in js
-
-    def test_csv_export_still_works(self, client):
-        """The exportCSV function should still exist for internal use."""
-        js = client.get("/static/js/app.js").data.decode()
-        assert "function exportCSV" in js
-
-    def test_export_pdf_still_works(self, client):
-        """The exportPdf function should still exist for internal use."""
+    def test_export_pdf_function(self, client):
         js = client.get("/static/js/app.js").data.decode()
         assert "function exportPdf" in js
 
-
-# ── PHASE 2: SETTINGS TABS ──────────────────────────────────────────────────
-
-class TestSettingsTabs:
-    """Settings page should use tabs instead of one long scroll."""
-
-    def test_tab_bar_exists(self, client):
-        html = client.get("/").data.decode()
-        assert "settings-tabs" in html
-
-    def test_general_tab(self, client):
-        html = client.get("/").data.decode()
-        assert 'data-settings-tab="general"' in html
-
-    def test_categories_tab(self, client):
-        html = client.get("/").data.decode()
-        assert 'data-settings-tab="categories"' in html
-
-    def test_accounts_tab(self, client):
-        html = client.get("/").data.decode()
-        assert 'data-settings-tab="accounts"' in html
-
-    def test_import_tab(self, client):
-        html = client.get("/").data.decode()
-        assert 'data-settings-tab="import"' in html
-
-    def test_general_pane(self, client):
-        html = client.get("/").data.decode()
-        assert 'data-tab="general"' in html
-
-    def test_categories_pane(self, client):
-        html = client.get("/").data.decode()
-        assert 'data-tab="categories"' in html
-
-    def test_accounts_pane(self, client):
-        html = client.get("/").data.decode()
-        assert 'data-tab="accounts"' in html
-
-    def test_import_pane(self, client):
-        html = client.get("/").data.decode()
-        assert 'data-tab="import"' in html
-
-    def test_general_is_active_by_default(self, client):
-        html = client.get("/").data.decode()
-        # The general tab button should be active
-        assert re.search(r'settings-tab active.*data-settings-tab="general"', html)
-
-    def test_general_pane_is_active_by_default(self, client):
-        html = client.get("/").data.decode()
-        assert re.search(r'settings-tab-pane active.*data-tab="general"', html)
-
-    def test_dashboard_layout_in_general(self, client):
-        """Dashboard Layout section should be inside the general tab pane."""
-        html = client.get("/").data.decode()
-        # Find the general pane, check Dashboard Layout is inside
-        gen_start = html.index('data-tab="general"')
-        gen_end = html.index('data-tab="categories"')
-        general_section = html[gen_start:gen_end]
-        assert "Dashboard Layout" in general_section
-
-    def test_categories_in_categories_tab(self, client):
-        html = client.get("/").data.decode()
-        cat_start = html.index('data-tab="categories"')
-        cat_end = html.index('data-tab="accounts"')
-        cat_section = html[cat_start:cat_end]
-        assert "Categories" in cat_section
-        assert "Monthly Budgets" in cat_section
-        assert "Category Groups" in cat_section
-
-    def test_accounts_in_accounts_tab(self, client):
-        html = client.get("/").data.decode()
-        acct_start = html.index('data-tab="accounts"')
-        acct_end = html.index('data-tab="import"')
-        acct_section = html[acct_start:acct_end]
-        assert "Accounts" in acct_section
-        assert "Scheduled Transactions" in acct_section
-        assert "Savings Goals" in acct_section
-
-    def test_import_in_import_tab(self, client):
-        html = client.get("/").data.decode()
-        imp_start = html.index('data-tab="import"')
-        import_section = html[imp_start:]
-        assert "Learned Merchants" in import_section
-        assert "Import Rules" in import_section
-
-
-class TestSettingsTabsCSS:
-    """CSS for settings tabs."""
-
-    def test_tab_styles(self, client):
-        css = client.get("/static/css/style.css").data.decode()
-        assert ".settings-tabs" in css
-        assert ".settings-tab" in css
-
-    def test_tab_pane_hidden_by_default(self, client):
-        css = client.get("/static/css/style.css").data.decode()
-        assert re.search(r"\.settings-tab-pane\s*\{[^}]*display:\s*none", css)
-
-    def test_active_tab_pane_visible(self, client):
-        css = client.get("/static/css/style.css").data.decode()
-        assert re.search(r"\.settings-tab-pane\.active\s*\{[^}]*display:\s*block", css)
-
-    def test_active_tab_accent_color(self, client):
-        css = client.get("/static/css/style.css").data.decode()
-        assert re.search(r"\.settings-tab\.active\s*\{[^}]*color:\s*var\(--accent\)", css)
-
-
-class TestSettingsTabsJS:
-    """JS for settings tab switching."""
-
-    def test_switch_function(self, client):
+    def test_open_pdf_modal_function(self, client):
         js = client.get("/static/js/app.js").data.decode()
-        assert "function switchSettingsTab" in js
+        assert "function openPdfModal" in js
 
-    def test_tab_state_persisted(self, client):
+    def test_csv_export_function(self, client):
         js = client.get("/static/js/app.js").data.decode()
-        assert "localStorage.setItem('settingsTab'" in js
+        assert "function exportCSV" in js
 
-    def test_tab_state_restored(self, client):
+
+# ── SETTINGS LAYOUT ─────────────────────────────────────────────────────────
+
+class TestSettingsLayout:
+    """Settings page should have a flat, scrollable layout."""
+
+    def test_dashboard_layout_section(self, client):
+        html = client.get("/").data.decode()
+        assert "Dashboard Layout" in html
+
+    def test_categories_section(self, client):
+        html = client.get("/").data.decode()
+        assert 'id="sec-settings"' in html
+        settings_start = html.index('id="sec-settings"')
+        settings_section = html[settings_start:]
+        assert "Categories" in settings_section
+
+    def test_budgets_section(self, client):
+        html = client.get("/").data.decode()
+        assert 'id="budget-panel"' in html
+        assert "Monthly Budgets" in html
+
+    def test_goals_section(self, client):
+        html = client.get("/").data.decode()
+        assert 'id="goals-panel"' in html
+        assert "Savings Goals" in html
+
+    def test_accounts_section(self, client):
+        html = client.get("/").data.decode()
+        assert 'id="accounts-panel"' in html
+
+    def test_schedules_section(self, client):
+        html = client.get("/").data.decode()
+        assert 'id="schedules-panel"' in html
+        assert "Scheduled Transactions" in html
+
+    def test_groups_section(self, client):
+        html = client.get("/").data.decode()
+        assert 'id="groups-panel"' in html
+        assert "Category Groups" in html
+
+    def test_learned_merchants_section(self, client):
+        html = client.get("/").data.decode()
+        assert "Learned Merchants" in html
+
+    def test_import_rules_section(self, client):
+        html = client.get("/").data.decode()
+        assert "Import Rules" in html
+
+    def test_show_budget_scrolls(self, client):
         js = client.get("/static/js/app.js").data.decode()
-        assert "localStorage.getItem('settingsTab')" in js
+        fn_start = js.index("function showBudgetPanel")
+        fn_section = js[fn_start:fn_start + 200]
+        assert "scrollIntoView" in fn_section
 
-    def test_show_budget_switches_tab(self, client):
+    def test_show_goals_scrolls(self, client):
         js = client.get("/static/js/app.js").data.decode()
-        # showBudgetPanel should switch to categories tab
-        budget_fn = js[js.index("function showBudgetPanel"):js.index("function showBudgetPanel") + 200]
-        assert "switchSettingsTab('categories')" in budget_fn
+        fn_start = js.index("function showGoalsPanel")
+        fn_section = js[fn_start:fn_start + 200]
+        assert "scrollIntoView" in fn_section
 
-    def test_show_goals_switches_tab(self, client):
+    def test_show_accounts_scrolls(self, client):
         js = client.get("/static/js/app.js").data.decode()
-        goals_fn = js[js.index("function showGoalsPanel"):js.index("function showGoalsPanel") + 200]
-        assert "switchSettingsTab('accounts')" in goals_fn
-
-    def test_show_accounts_switches_tab(self, client):
-        js = client.get("/static/js/app.js").data.decode()
-        acct_fn = js[js.index("function showAccountsPanel"):js.index("function showAccountsPanel") + 200]
-        assert "switchSettingsTab('accounts')" in acct_fn
+        fn_start = js.index("function showAccountsPanel")
+        fn_section = js[fn_start:fn_start + 200]
+        assert "scrollIntoView" in fn_section
 
 
-# ── PHASE 3: COLLAPSIBLE PANELS + AUTO-HIDE ─────────────────────────────────
+# ── COLLAPSIBLE PANELS + AUTO-HIDE ──────────────────────────────────────────
 
 class TestCollapsiblePanels:
     """Dashboard panels should be collapsible by clicking the title."""
@@ -332,10 +215,8 @@ class TestCollapsiblePanels:
         assert "localStorage.setItem" in js
 
     def test_init_called_after_layout(self, client):
-        """initCollapsiblePanels should be called after applyDashboardLayout."""
         js = client.get("/static/js/app.js").data.decode()
         layout_pos = js.index("applyDashboardLayout();")
-        # Find the next initCollapsiblePanels call after the first applyDashboardLayout
         init_pos = js.index("initCollapsiblePanels()", layout_pos)
         assert init_pos > layout_pos
 
@@ -344,7 +225,6 @@ class TestCollapsiblePanels:
         assert re.search(r"\.panel-title\s*\{[^}]*cursor:\s*pointer", css)
 
     def test_button_clicks_not_collapsed(self, client):
-        """Clicking buttons inside panel-title should not collapse."""
         js = client.get("/static/js/app.js").data.decode()
         assert "e.target.closest('button')" in js
 
@@ -365,16 +245,13 @@ class TestAutoHideEmptyPanels:
         assert re.search(r"\.panel-auto-hidden\s*\{[^}]*display:\s*none\s*!important", css)
 
     def test_called_after_render(self, client):
-        """autoHideEmptyPanels should be called after renderMonth panels complete."""
         js = client.get("/static/js/app.js").data.decode()
         assert "await Promise.all(renderPromises)" in js
-        # autoHideEmptyPanels should be right after the await
         promise_pos = js.index("await Promise.all(renderPromises)")
         auto_hide_pos = js.index("autoHideEmptyPanels()", promise_pos)
         assert auto_hide_pos > promise_pos
 
     def test_checks_all_panels(self, client):
-        """Should check each panel type for meaningful data."""
         js = client.get("/static/js/app.js").data.decode()
         fn_start = js.index("function autoHideEmptyPanels")
         fn_section = js[fn_start:fn_start + 2000]
@@ -389,66 +266,39 @@ class TestAutoHideEmptyPanels:
         assert "'account-balances'" in fn_section
 
     def test_skips_user_hidden(self, client):
-        """Auto-hide should skip panels already hidden by user (panel-hidden)."""
         js = client.get("/static/js/app.js").data.decode()
         fn_start = js.index("function autoHideEmptyPanels")
         fn_section = js[fn_start:fn_start + 500]
         assert "panel-hidden" in fn_section
 
 
-# ── PHASE 4: CONTEXTUAL ACTIONS ─────────────────────────────────────────────
+# ── CONTEXTUAL ACTIONS ──────────────────────────────────────────────────────
 
 class TestContextualActions:
-    """Transfer and Export should be available in context."""
+    """Dashboard gear buttons should navigate to settings and scroll."""
 
-    def test_transfer_button_in_account_balances(self, client):
-        """Account Balances panel should have a Transfer button."""
+    def test_settings_button_in_spending_by_category(self, client):
         html = client.get("/").data.decode()
-        # Find the account-balances panel section
-        panel_start = html.index('data-panel-id="account-balances"')
+        panel_start = html.index('data-panel-id="spending-by-category"')
         panel_section = html[panel_start:panel_start + 500]
-        assert "openTransferModal()" in panel_section
-        assert "⇄" in panel_section
+        assert "showBudgetPanel()" in panel_section
 
-    def test_settings_button_still_in_account_balances(self, client):
-        """The ⚙ settings button should still be present."""
+    def test_settings_button_in_savings_goals(self, client):
+        html = client.get("/").data.decode()
+        panel_start = html.index('data-panel-id="savings-goals"')
+        panel_section = html[panel_start:panel_start + 500]
+        assert "showGoalsPanel()" in panel_section
+
+    def test_settings_button_in_account_balances(self, client):
         html = client.get("/").data.decode()
         panel_start = html.index('data-panel-id="account-balances"')
         panel_section = html[panel_start:panel_start + 500]
         assert "showAccountsPanel()" in panel_section
 
-    def test_month_menu_exists(self, client):
-        """Dashboard month header should have a '...' menu."""
+    def test_customize_button_on_dashboard(self, client):
         html = client.get("/").data.decode()
-        assert "month-menu-wrap" in html
-        assert 'id="month-menu-dropdown"' in html
-
-    def test_month_menu_has_export_options(self, client):
-        html = client.get("/").data.decode()
-        menu_start = html.index('id="month-menu-dropdown"')
-        menu_section = html[menu_start:menu_start + 500]
-        assert "Export this month" in menu_section
-        assert "Export all" in menu_section
-
-    def test_year_review_export_button(self, client):
-        """Year Review section should have an export button."""
-        html = client.get("/").data.decode()
-        year_start = html.index('id="sec-year"')
-        year_header = html[year_start:year_start + 800]
-        assert "openExportModal()" in year_header
-
-    def test_month_menu_toggle_function(self, client):
-        js = client.get("/static/js/app.js").data.decode()
-        assert "function toggleMonthMenu" in js
-
-    def test_month_menu_close_function(self, client):
-        js = client.get("/static/js/app.js").data.decode()
-        assert "function closeMonthMenu" in js
-
-    def test_month_menu_css(self, client):
-        css = client.get("/static/css/style.css").data.decode()
-        assert ".month-menu-dropdown" in css
-        assert ".month-menu-wrap" in css
+        assert "openCustomizeModal()" in html
+        assert "Customize dashboard layout" in html
 
 
 # ── INTEGRATION: ALL VIEWS STILL WORK ───────────────────────────────────────
@@ -490,13 +340,32 @@ class TestViewsIntegrity:
         assert 'id="add-modal"' in html
         assert 'id="edit-modal"' in html
         assert 'id="bulk-cat-modal"' in html
-        assert 'id="export-modal"' in html
+        assert 'id="pdf-modal"' in html
         assert 'id="customize-modal"' in html
         assert 'id="transfer-modal"' in html
         assert 'id="contribute-modal"' in html
         assert 'id="rule-modal"' in html
         assert 'id="template-modal"' in html
 
+
+# ── CARD ACCENT BARS ────────────────────────────────────────────────────────
+
+class TestCardAccentBars:
+    """Stat cards should have colored accent bars."""
+
+    def test_accent_bar_in_html(self, client):
+        html = client.get("/").data.decode()
+        assert "card-accent-bar" in html
+
+    def test_accent_bar_css(self, client):
+        css = client.get("/static/css/style.css").data.decode()
+        assert ".card-accent-bar" in css
+        assert ".card-accent-bar.green" in css
+        assert ".card-accent-bar.red" in css
+        assert ".card-accent-bar.blue" in css
+
+
+# ── EXPORT API STILL WORKS ──────────────────────────────────────────────────
 
 class TestExportAPIStillWorks:
     """Export APIs should still function correctly."""

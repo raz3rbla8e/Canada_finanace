@@ -339,10 +339,6 @@ function applyDemoRestrictions() {
       btn.classList.add('demo-disabled');
       btn.setAttribute('onclick', "toast('Import is disabled in demo mode','error')");
     }
-  });
-  // Disable quick action items that are blocked in demo mode
-  document.querySelectorAll('.quick-action-item').forEach(btn => {
-    const onclick = btn.getAttribute('onclick') || '';
     if (onclick.includes('openAddModal')) {
       btn.classList.add('demo-disabled');
       btn.setAttribute('onclick', "toast('Adding transactions is disabled in demo mode','error')");
@@ -997,7 +993,6 @@ async function deleteLearned(keyword) {
 }
 
 function showBudgetPanel() {
-  switchSettingsTab('categories');
   const el = document.getElementById('budget-panel');
   setTimeout(() => el.scrollIntoView({behavior:'smooth'}), 50);
 }
@@ -1665,17 +1660,13 @@ function nav(id) {
   if (id==='dashboard' && document.getElementById('empty-state').style.display !== 'none') refreshDashboard();
   if (id==='transactions') { loadTransactions(); setTimeout(applyDemoToTransactions, 100); }
   if (id==='year') renderYear();
-  if (id==='settings') { loadSettings(); switchSettingsTab(localStorage.getItem('settingsTab')||'general'); setTimeout(applyDemoToSettings, 200); }
+  if (id==='settings') { loadSettings(); setTimeout(applyDemoToSettings, 200); }
   if (id==='import') applyDemoToImport();
 }
 
 // ── SETTINGS TABS ─────────────────────────────────────────────────────────────
 function switchSettingsTab(tabName) {
-  const validTabs = ['general','categories','accounts','import'];
-  if (!validTabs.includes(tabName)) tabName = 'general';
-  document.querySelectorAll('.settings-tab').forEach(t => t.classList.toggle('active', t.dataset.settingsTab === tabName));
-  document.querySelectorAll('.settings-tab-pane').forEach(p => p.classList.toggle('active', p.dataset.tab === tabName));
-  localStorage.setItem('settingsTab', tabName);
+  // Settings tabs removed — flat layout now; no-op for backward compatibility
 }
 
 async function refreshDashboard() {
@@ -1870,7 +1861,6 @@ async function deleteGoal(id) {
 }
 
 function showGoalsPanel() {
-  switchSettingsTab('accounts');
   const el = document.getElementById('goals-panel');
   if (el) setTimeout(() => el.scrollIntoView({behavior:'smooth'}), 50);
 }
@@ -1980,68 +1970,28 @@ async function submitSplit() {
 
 // ── PDF EXPORT ────────────────────────────────────────────────────────────────
 function openPdfModal() {
-  openExportModal('pdf');
+  document.getElementById('pdf-modal').classList.add('open');
 }
 
 function exportPdf() {
   if (!months.length) return toast('No data to export','error');
   const m = months[currentMonthIdx];
-  const incTxns = document.getElementById('export-include-txns').checked ? '1' : '0';
+  const incTxns = document.getElementById('pdf-include-txns').checked ? '1' : '0';
   window.open(`/api/export/pdf?month=${m}&include_transactions=${incTxns}`, '_blank');
-  closeModal('export-modal');
+  closeModal('pdf-modal');
   toast('PDF downloading…','success');
 }
 
-// ── UNIFIED EXPORT MODAL ──────────────────────────────────────────────────────
-function openExportModal(preselect) {
-  // Reset state
-  document.querySelectorAll('input[name="export-format"]').forEach(r => r.checked = (r.value === (preselect || 'csv')));
-  document.querySelectorAll('input[name="export-scope"]').forEach(r => r.checked = (r.value === 'month'));
-  document.getElementById('export-include-txns').checked = false;
-  onExportFormatChange();
-  document.getElementById('export-modal').classList.add('open');
-}
+// ── UNIFIED EXPORT MODAL (removed — kept as no-ops) ───────────────────────────
+function openExportModal(preselect) {}
+function onExportFormatChange() {}
+function doExport() {}
 
-function onExportFormatChange() {
-  const fmt = document.querySelector('input[name="export-format"]:checked').value;
-  const scopeGroup = document.getElementById('export-scope-group');
-  const pdfOpts = document.getElementById('export-pdf-options');
-  if (fmt === 'pdf') {
-    // PDF is always single month — disable "All Time" and force "This Month"
-    document.getElementById('export-scope-all').disabled = true;
-    document.querySelector('input[name="export-scope"][value="month"]').checked = true;
-    pdfOpts.style.display = '';
-  } else {
-    document.getElementById('export-scope-all').disabled = false;
-    pdfOpts.style.display = 'none';
-  }
-}
+// ── QUICK ACTIONS POPOVER (removed — sidebar buttons now) ─────────────────────
+function toggleQuickActions(e) {}
+function closeQuickActions() {}
 
-function doExport() {
-  const fmt = document.querySelector('input[name="export-format"]:checked').value;
-  const scope = document.querySelector('input[name="export-scope"]:checked').value;
-  if (fmt === 'pdf') {
-    exportPdf();
-  } else {
-    const allTime = scope === 'all';
-    exportCSV(allTime);
-    closeModal('export-modal');
-  }
-}
-
-// ── QUICK ACTIONS POPOVER ─────────────────────────────────────────────────────
-function toggleQuickActions(e) {
-  if (e) e.stopPropagation();
-  const wrap = document.querySelector('.quick-actions-wrap');
-  wrap.classList.toggle('open');
-}
-
-function closeQuickActions() {
-  const wrap = document.querySelector('.quick-actions-wrap');
-  if (wrap) wrap.classList.remove('open');
-}
-
-// Close quick actions when clicking outside
+// Click-outside listener (safe with null checks)
 document.addEventListener('click', function(e) {
   const wrap = document.querySelector('.quick-actions-wrap');
   if (wrap && !wrap.contains(e.target)) wrap.classList.remove('open');
@@ -2049,16 +1999,9 @@ document.addEventListener('click', function(e) {
   if (menuWrap && !menuWrap.contains(e.target)) menuWrap.classList.remove('open');
 });
 
-// ── MONTH HEADER MENU ─────────────────────────────────────────────────────────
-function toggleMonthMenu(e) {
-  if (e) e.stopPropagation();
-  document.querySelector('.month-menu-wrap').classList.toggle('open');
-}
-
-function closeMonthMenu() {
-  const wrap = document.querySelector('.month-menu-wrap');
-  if (wrap) wrap.classList.remove('open');
-}
+// ── MONTH HEADER MENU (removed — sidebar export buttons now) ──────────────────
+function toggleMonthMenu(e) {}
+function closeMonthMenu() {}
 
 // ── NET WORTH ─────────────────────────────────────────────────────────────────
 let netWorthChart = null;
@@ -2172,7 +2115,6 @@ async function deleteAccount(id) {
 }
 
 function showAccountsPanel() {
-  switchSettingsTab('accounts');
   const el = document.getElementById('accounts-panel');
   if (el) setTimeout(() => el.scrollIntoView({behavior:'smooth'}), 50);
 }
@@ -2318,6 +2260,32 @@ async function autoPostSchedules() {
     headers:{'Content-Type':'application/json'}, body: '{}'});
   if (res && res.ok && res.posted > 0) {
     toast(`Auto-posted ${res.posted} scheduled transaction(s)`,'success');
+  }
+}
+
+// ── BACKUP & RESTORE ──────────────────────────────────────────────────────────
+function downloadBackup() {
+  window.location.href = '/api/backup';
+  toast('Downloading backup…','success');
+}
+
+async function restoreBackup(file) {
+  if (!file) return;
+  if (!confirm('Restore from backup? This will REPLACE all current data with the backup file. This cannot be undone.')) {
+    document.getElementById('restore-input').value = '';
+    return;
+  }
+  const fd = new FormData();
+  fd.append('file', file);
+  const token = await _ensureCsrf();
+  const res = await fetch('/api/restore', {method:'POST', body: fd, headers:{'X-CSRF-Token': token}});
+  document.getElementById('restore-input').value = '';
+  if (res.ok) {
+    toast('Database restored ✓ — reloading…','success');
+    setTimeout(() => location.reload(), 1000);
+  } else {
+    const data = await res.json().catch(()=>({}));
+    toast(data.error || 'Restore failed','error');
   }
 }
 
