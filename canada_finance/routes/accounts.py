@@ -237,15 +237,20 @@ def api_schedules_post_due():
         elif s["frequency"] == "biweekly":
             d += timedelta(weeks=2)
         elif s["frequency"] == "monthly":
+            import calendar
+            orig_day = d.day
             month = d.month + 1
             year = d.year
             if month > 12:
                 month = 1
                 year += 1
-            day = min(d.day, 28)  # Safe day
-            d = date(year, month, day)
+            max_day = calendar.monthrange(year, month)[1]
+            d = date(year, month, min(orig_day, max_day))
         elif s["frequency"] == "yearly":
-            d = date(d.year + 1, d.month, min(d.day, 28))
+            import calendar
+            next_year = d.year + 1
+            max_day = calendar.monthrange(next_year, d.month)[1]
+            d = date(next_year, d.month, min(d.day, max_day))
         db.execute("UPDATE scheduled_transactions SET next_due=? WHERE id=?", (d.isoformat(), s["id"]))
     db.commit()
     return jsonify({"ok": True, "posted": posted})

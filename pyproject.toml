@@ -11,6 +11,8 @@ requires-python = ">=3.9"
 dependencies = [
     "flask>=3.0.0",
     "pyyaml>=6.0",
+    "fpdf2>=2.7.0",
+    "gunicorn>=22.0.0",
 ]
 
 [project.optional-dependencies]

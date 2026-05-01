@@ -136,6 +136,7 @@ def parse_with_config(text: str, config: dict, learned: dict) -> list:
     type_key = _find_column(row_keys, cols.get("type", ""), flexible=flexible) if "type" in cols else None
     cat_key = _find_column(row_keys, cols.get("category", ""), flexible=flexible) if "category" in cols else None
 
+    skipped = 0
     for row in reader:
         try:
             # Get description
@@ -216,7 +217,11 @@ def parse_with_config(text: str, config: dict, learned: dict) -> list:
                     txns.append(_make_txn(dt, "Income", desc, c,
                                           acct, learned, credit_default))
         except Exception:
+            skipped += 1
             continue
+    if skipped:
+        import logging
+        logging.warning("csv_parser: skipped %d malformed row(s) during import", skipped)
     return txns
 
 

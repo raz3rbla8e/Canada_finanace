@@ -1,7 +1,7 @@
 """Tests for progressive disclosure UI rework.
 
 Validates: sidebar with collapsible toggle, direct action buttons,
-separate export buttons, PDF modal, flat settings layout,
+unified export modal, quick actions popover, PDF modal, tabbed settings,
 collapsible panels, auto-hide empty panels, contextual actions.
 """
 import re
@@ -35,19 +35,27 @@ class TestSidebarLayout:
         assert "openTransferModal()" in html
         assert "Transfer" in html
 
-    def test_sidebar_has_export_month(self, client):
+    def test_sidebar_has_quick_actions(self, client):
+        html = client.get("/").data.decode()
+        assert "toggleQuickActions" in html
+        assert "Quick Actions" in html
+        assert 'id="quick-actions-popover"' in html
+
+    def test_sidebar_has_unified_export(self, client):
+        html = client.get("/").data.decode()
+        assert "openExportModal()" in html
+        assert ">Export<" in html
+
+    def test_export_functions_available(self, client):
         html = client.get("/").data.decode()
         assert "exportCSV(false)" in html
-        assert "Export Month" in html
-
-    def test_sidebar_has_export_all(self, client):
-        html = client.get("/").data.decode()
         assert "exportCSV(true)" in html
-        assert "Export All" in html
-
-    def test_sidebar_has_export_pdf(self, client):
-        html = client.get("/").data.decode()
         assert "openPdfModal()" in html
+
+    def test_month_menu_has_export_options(self, client):
+        html = client.get("/").data.decode()
+        assert "Export Month" in html
+        assert "Export All" in html
         assert "Export PDF" in html
 
     def test_views_still_present(self, client):
@@ -124,7 +132,44 @@ class TestPdfModal:
 # ── SETTINGS LAYOUT ─────────────────────────────────────────────────────────
 
 class TestSettingsLayout:
-    """Settings page should have a flat, scrollable layout."""
+    """Settings page should have tabbed layout with 4 tabs."""
+
+    def test_settings_has_tab_bar(self, client):
+        html = client.get("/").data.decode()
+        assert "settings-tabs" in html
+        assert "settings-tab" in html
+
+    def test_settings_has_general_tab(self, client):
+        html = client.get("/").data.decode()
+        assert "switchSettingsTab('general')" in html
+        assert 'data-tab-pane="general"' in html
+
+    def test_settings_has_categories_tab(self, client):
+        html = client.get("/").data.decode()
+        assert "switchSettingsTab('categories')" in html
+        assert 'data-tab-pane="categories"' in html
+
+    def test_settings_has_accounts_tab(self, client):
+        html = client.get("/").data.decode()
+        assert "switchSettingsTab('accounts')" in html
+        assert 'data-tab-pane="accounts"' in html
+
+    def test_settings_has_import_tab(self, client):
+        html = client.get("/").data.decode()
+        assert "switchSettingsTab('import')" in html
+        assert 'data-tab-pane="import"' in html
+
+    def test_switch_settings_tab_function(self, client):
+        js = client.get("/static/js/app.js").data.decode()
+        fn_start = js.index("function switchSettingsTab")
+        fn_section = js[fn_start:fn_start + 300]
+        assert "settings-tab-pane" in fn_section
+
+    def test_settings_tab_css(self, client):
+        css = client.get("/static/css/style.css").data.decode()
+        assert ".settings-tabs" in css
+        assert ".settings-tab.active" in css
+        assert ".settings-tab-pane" in css
 
     def test_dashboard_layout_section(self, client):
         html = client.get("/").data.decode()
@@ -172,20 +217,23 @@ class TestSettingsLayout:
     def test_show_budget_scrolls(self, client):
         js = client.get("/static/js/app.js").data.decode()
         fn_start = js.index("function showBudgetPanel")
-        fn_section = js[fn_start:fn_start + 200]
+        fn_section = js[fn_start:fn_start + 300]
         assert "scrollIntoView" in fn_section
+        assert "switchSettingsTab" in fn_section
 
     def test_show_goals_scrolls(self, client):
         js = client.get("/static/js/app.js").data.decode()
         fn_start = js.index("function showGoalsPanel")
-        fn_section = js[fn_start:fn_start + 200]
+        fn_section = js[fn_start:fn_start + 300]
         assert "scrollIntoView" in fn_section
+        assert "switchSettingsTab" in fn_section
 
     def test_show_accounts_scrolls(self, client):
         js = client.get("/static/js/app.js").data.decode()
         fn_start = js.index("function showAccountsPanel")
-        fn_section = js[fn_start:fn_start + 200]
+        fn_section = js[fn_start:fn_start + 300]
         assert "scrollIntoView" in fn_section
+        assert "switchSettingsTab" in fn_section
 
 
 # ── COLLAPSIBLE PANELS + AUTO-HIDE ──────────────────────────────────────────
@@ -341,6 +389,7 @@ class TestViewsIntegrity:
         assert 'id="edit-modal"' in html
         assert 'id="bulk-cat-modal"' in html
         assert 'id="pdf-modal"' in html
+        assert 'id="export-modal"' in html
         assert 'id="customize-modal"' in html
         assert 'id="transfer-modal"' in html
         assert 'id="contribute-modal"' in html
@@ -382,3 +431,116 @@ class TestExportAPIStillWorks:
         seed_transaction(client)
         res = client.get("/api/export?month=")
         assert res.status_code == 200
+
+
+# ── QUICK ACTIONS POPOVER ───────────────────────────────────────────────────
+
+class TestQuickActionsPopover:
+    """Quick Actions popover should be present and functional."""
+
+    def test_quick_actions_button_exists(self, client):
+        html = client.get("/").data.decode()
+        assert 'id="quick-actions-btn"' in html
+
+    def test_quick_actions_popover_exists(self, client):
+        html = client.get("/").data.decode()
+        assert 'id="quick-actions-popover"' in html
+        assert "quick-actions-popover" in html
+
+    def test_toggle_function_exists(self, client):
+        js = client.get("/static/js/app.js").data.decode()
+        assert "function toggleQuickActions" in js
+
+    def test_close_function_exists(self, client):
+        js = client.get("/static/js/app.js").data.decode()
+        assert "function closeQuickActions" in js
+
+    def test_popover_has_actions(self, client):
+        html = client.get("/").data.decode()
+        pop_start = html.index('id="quick-actions-popover"')
+        pop_section = html[pop_start:pop_start + 800]
+        assert "Add Transaction" in pop_section
+        assert "Transfer" in pop_section
+        assert "Export Data" in pop_section
+        assert "Import CSV" in pop_section
+
+    def test_popover_css(self, client):
+        css = client.get("/static/css/style.css").data.decode()
+        assert ".quick-actions-popover" in css
+        assert ".quick-action-item" in css
+
+
+# ── UNIFIED EXPORT MODAL ───────────────────────────────────────────────────
+
+class TestUnifiedExportModal:
+    """Unified export modal combines CSV and PDF export."""
+
+    def test_export_modal_exists(self, client):
+        html = client.get("/").data.decode()
+        assert 'id="export-modal"' in html
+
+    def test_export_format_select(self, client):
+        html = client.get("/").data.decode()
+        assert 'id="export-format"' in html
+
+    def test_export_scope_select(self, client):
+        html = client.get("/").data.decode()
+        assert 'id="export-scope"' in html
+
+    def test_open_export_modal_function(self, client):
+        js = client.get("/static/js/app.js").data.decode()
+        assert "function openExportModal" in js
+
+    def test_on_export_format_change_function(self, client):
+        js = client.get("/static/js/app.js").data.decode()
+        assert "function onExportFormatChange" in js
+
+    def test_do_export_function(self, client):
+        js = client.get("/static/js/app.js").data.decode()
+        assert "function doExport" in js
+
+    def test_pdf_options_toggle(self, client):
+        html = client.get("/").data.decode()
+        assert 'id="export-pdf-options"' in html
+        assert 'id="export-include-txns"' in html
+
+
+# ── MONTH CONTEXT MENU ─────────────────────────────────────────────────────
+
+class TestMonthContextMenu:
+    """Month header should have a context menu for exports."""
+
+    def test_month_menu_exists(self, client):
+        html = client.get("/").data.decode()
+        assert 'id="month-menu"' in html
+
+    def test_toggle_month_menu_function(self, client):
+        js = client.get("/static/js/app.js").data.decode()
+        assert "function toggleMonthMenu" in js
+
+    def test_close_month_menu_function(self, client):
+        js = client.get("/static/js/app.js").data.decode()
+        assert "function closeMonthMenu" in js
+
+    def test_month_menu_has_csv_export(self, client):
+        html = client.get("/").data.decode()
+        menu_start = html.index('id="month-menu"')
+        menu_section = html[menu_start:menu_start + 600]
+        assert "exportCSV(false)" in menu_section
+
+    def test_month_menu_has_pdf_export(self, client):
+        html = client.get("/").data.decode()
+        menu_start = html.index('id="month-menu"')
+        menu_section = html[menu_start:menu_start + 600]
+        assert "openPdfModal()" in menu_section
+
+    def test_month_menu_has_all_export(self, client):
+        html = client.get("/").data.decode()
+        menu_start = html.index('id="month-menu"')
+        menu_section = html[menu_start:menu_start + 600]
+        assert "exportCSV(true)" in menu_section
+
+    def test_month_menu_css(self, client):
+        css = client.get("/static/css/style.css").data.decode()
+        assert ".month-menu" in css
+        assert ".month-menu-item" in css

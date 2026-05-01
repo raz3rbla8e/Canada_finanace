@@ -2,7 +2,7 @@
 /* Design: Refined financial-grade. Plus Jakarta Sans + JetBrains Mono.        */
 /* Accent: confident blue + mint green for positive signals.                   */
 
-@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700&family=JetBrains+Mono:wght@300;400;500&display=swap');
+/* Fonts loaded in index.html <head> — no @import needed here */
 
 /* ── TOKENS ─────────────────────────────────────────────────────────────────── */
 :root {
@@ -64,7 +64,8 @@
   --blue-dim:    oklch(62%  0.18  240 / 0.08);
   --mint-dim:    oklch(55%  0.16  165 / 0.10);
   --red-dim:     oklch(55%  0.20  25  / 0.08);
-}\n[data-theme=\"light\"] .logo-mark { background: oklch(92% 0.02 240); }
+}
+[data-theme="light"] .logo-mark { background: oklch(92% 0.02 240); }
 
 /* ── RESET ───────────────────────────────────────────────────────────────────── */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -768,6 +769,34 @@ label {
 }
 
 /* ── SETTINGS ────────────────────────────────────────────────────────────────── */
+.settings-tabs {
+  display: flex;
+  gap: 0;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 24px;
+  position: sticky;
+  top: 0;
+  background: var(--bg);
+  z-index: 5;
+  padding-top: 4px;
+}
+.settings-tab {
+  padding: 10px 18px;
+  font-size: 12px;
+  font-weight: 500;
+  font-family: var(--sans);
+  color: var(--muted);
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  transition: color var(--t), border-color var(--t);
+  letter-spacing: -0.1px;
+}
+.settings-tab:hover { color: var(--text); }
+.settings-tab.active { color: var(--blue); border-bottom-color: var(--blue); }
+.settings-tab-pane { display: none; }
+.settings-tab-pane.active { display: block; }
 .settings-section { margin-bottom: 32px; }
 .settings-title {
   font-size: 13px;
@@ -807,6 +836,72 @@ label {
 }
 .tag .x { cursor: pointer; color: var(--muted); font-size: 13px; line-height: 1; }
 .tag .x:hover { color: var(--red); }
+
+/* ── QUICK ACTIONS POPOVER ───────────────────────────────────────────────────── */
+.quick-actions-popover {
+  display: none;
+  position: fixed;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 6px;
+  min-width: 180px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+  z-index: 200;
+}
+.quick-actions-popover.open { display: block; }
+.quick-action-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 9px 12px;
+  font-size: 13px;
+  font-family: var(--sans);
+  color: var(--text);
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background var(--t);
+  text-align: left;
+}
+.quick-action-item:hover { background: var(--surface); }
+
+/* ── MONTH CONTEXT MENU ──────────────────────────────────────────────────────── */
+.month-menu {
+  display: none;
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  margin-top: 6px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 6px;
+  min-width: 170px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+  z-index: 200;
+}
+.month-menu.open { display: block; }
+.month-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 9px 12px;
+  font-size: 13px;
+  font-family: var(--sans);
+  color: var(--text);
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background var(--t);
+  text-align: left;
+}
+.month-menu-item:hover { background: var(--surface); }
 
 /* ── YEAR VIEW ───────────────────────────────────────────────────────────────── */
 .year-bar-row {

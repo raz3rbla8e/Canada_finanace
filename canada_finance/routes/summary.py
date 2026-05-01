@@ -89,18 +89,29 @@ def api_summary():
 @summary_bp.route("/api/year/<int:year>")
 def api_year(year):
     db = get_db()
+    # Single query to get income/expenses by month for the entire year
+    monthly = db.execute(
+        """SELECT substr(date,1,7) as month, type, SUM(amount) as total
+        FROM transactions WHERE hidden=0 AND date LIKE ? GROUP BY month, type""",
+        (f"{year}%",),
+    ).fetchall()
+    month_map = {}
+    for r in monthly:
+        m = r["month"]
+        if m not in month_map:
+            month_map[m] = {"income": 0, "expenses": 0}
+        if r["type"] == "Income":
+            month_map[m]["income"] = r["total"]
+        else:
+            month_map[m]["expenses"] = r["total"]
     months_data = []
     for m in range(1, 13):
-        like = f"{year}-{m:02d}%"
-        inc = db.execute(
-            "SELECT COALESCE(SUM(amount),0) as t FROM transactions WHERE type='Income' AND hidden=0 AND date LIKE ?",
-            (like,),
-        ).fetchone()["t"]
-        exp = db.execute(
-            "SELECT COALESCE(SUM(amount),0) as t FROM transactions WHERE type='Expense' AND hidden=0 AND date LIKE ?",
-            (like,),
-        ).fetchone()["t"]
-        months_data.append({"month": f"{year}-{m:02d}", "income": inc, "expenses": exp, "net": inc - exp})
+        key = f"{year}-{m:02d}"
+        data = month_map.get(key, {"income": 0, "expenses": 0})
+        months_data.append({
+            "month": key, "income": data["income"],
+            "expenses": data["expenses"], "net": data["income"] - data["expenses"],
+        })
     top_cats = db.execute(
         """SELECT category, SUM(amount) as total FROM transactions
         WHERE type='Expense' AND hidden=0 AND date LIKE ? GROUP BY category ORDER BY total DESC LIMIT 5""",
@@ -181,21 +192,23 @@ def api_trends():
     n = request.args.get("months", 6, type=int)
     n = max(1, min(n, 24))
     db = get_db()
-    months_rows = db.execute(
-        "SELECT DISTINCT substr(date,1,7) as m FROM transactions WHERE hidden=0 ORDER BY m DESC LIMIT ?",
-        (n,),
+    rows = db.execute(
+        """SELECT substr(date,1,7) as m, type, SUM(amount) as total
+        FROM transactions WHERE hidden=0
+        GROUP BY m, type ORDER BY m DESC""",
     ).fetchall()
+    month_map = {}
+    for r in rows:
+        m = r["m"]
+        if m not in month_map:
+            month_map[m] = {"income": 0, "expenses": 0}
+        if r["type"] == "Income":
+            month_map[m]["income"] = r["total"]
+        else:
+            month_map[m]["expenses"] = r["total"]
+    sorted_months = sorted(month_map.keys(), reverse=True)[:n]
     result = []
-    for row in reversed(months_rows):
-        m = row["m"]
-        like = f"{m}%"
-        inc = db.execute(
-            "SELECT COALESCE(SUM(amount),0) as t FROM transactions WHERE type='Income' AND hidden=0 AND date LIKE ?",
-            (like,),
-        ).fetchone()["t"]
-        exp = db.execute(
-            "SELECT COALESCE(SUM(amount),0) as t FROM transactions WHERE type='Expense' AND hidden=0 AND date LIKE ?",
-            (like,),
-        ).fetchone()["t"]
-        result.append({"month": m, "income": inc, "expenses": exp, "net": inc - exp})
+    for m in reversed(sorted_months):
+        d = month_map[m]
+        result.append({"month": m, "income": d["income"], "expenses": d["expenses"], "net": d["income"] - d["expenses"]})
     return jsonify(result)

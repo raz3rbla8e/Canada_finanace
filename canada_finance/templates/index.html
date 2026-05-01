@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="theme-color" content="#3b82f6">
+<meta name="theme-color" content="#0e0f11">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <title>Boreal</title>
@@ -97,6 +97,15 @@
   <div class="nav-section">
     <div class="nav-label">Actions</div>
 
+    <button class="nav-btn" onclick="toggleQuickActions(event)" data-tip="Quick Actions" id="quick-actions-btn">
+      <span class="nav-icon">
+        <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+          <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>
+        </svg>
+      </span>
+      <span class="nav-label-text">Quick Actions</span>
+    </button>
+
     <button class="nav-btn" onclick="openAddModal()" data-tip="Add Transaction">
       <span class="nav-icon">
         <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
@@ -115,31 +124,13 @@
       <span class="nav-label-text">Transfer</span>
     </button>
 
-    <button class="nav-btn" onclick="exportCSV(false)" data-tip="Export Month">
+    <button class="nav-btn" onclick="openExportModal()" data-tip="Export">
       <span class="nav-icon">
         <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
           <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
         </svg>
       </span>
-      <span class="nav-label-text">Export Month</span>
-    </button>
-
-    <button class="nav-btn" onclick="exportCSV(true)" data-tip="Export All">
-      <span class="nav-icon">
-        <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-          <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
-        </svg>
-      </span>
-      <span class="nav-label-text">Export All</span>
-    </button>
-
-    <button class="nav-btn" onclick="openPdfModal()" data-tip="Export PDF">
-      <span class="nav-icon">
-        <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-          <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/>
-        </svg>
-      </span>
-      <span class="nav-label-text">Export PDF</span>
+      <span class="nav-label-text">Export</span>
     </button>
   </div>
 
@@ -182,7 +173,14 @@
       <button class="month-btn" id="month-prev" onclick="changeMonth(-1)">
         <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg>
       </button>
-      <div class="month-label" id="month-display">—</div>
+      <div class="month-label" id="month-display" style="position:relative;cursor:pointer" onclick="toggleMonthMenu(event)">
+        —
+        <div class="month-menu" id="month-menu">
+          <button class="month-menu-item" onclick="event.stopPropagation(); exportCSV(false); closeMonthMenu()">📊 Export Month CSV</button>
+          <button class="month-menu-item" onclick="event.stopPropagation(); openPdfModal(); closeMonthMenu()">📄 Export PDF Report</button>
+          <button class="month-menu-item" onclick="event.stopPropagation(); exportCSV(true); closeMonthMenu()">📁 Export All CSV</button>
+        </div>
+      </div>
       <button class="month-btn" id="month-next" onclick="changeMonth(1)">
         <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>
       </button>
@@ -386,7 +384,7 @@
       ondrop="handleDrop(event)">
       <span class="file-icon">📂</span>
       <strong>Drop CSV or OFX/QFX files here</strong>
-      <p>Tangerine · Wealthsimple · TD · RBC · CIBC · Scotiabank · BMO · National Bank · OFX/QFX<br>
+      <p>Tangerine · Wealthsimple · TD · RBC · CIBC · Scotiabank · BMO · National Bank · Amex · OFX/QFX<br>
       Unknown format? A wizard will map your columns automatically.</p>
     </div>
     <input type="file" id="csv-input" multiple accept=".csv,.ofx,.qfx" style="display:none" onchange="handleFiles(this.files)">
@@ -400,6 +398,17 @@
 <section id="sec-settings" class="section" data-screen-label="Settings">
   <div style="max-width:640px">
 
+    <!-- Settings Tab Bar -->
+    <div class="settings-tabs">
+      <button class="settings-tab active" onclick="switchSettingsTab('general')" data-tab="general">General</button>
+      <button class="settings-tab" onclick="switchSettingsTab('categories')" data-tab="categories">Categories</button>
+      <button class="settings-tab" onclick="switchSettingsTab('accounts')" data-tab="accounts">Accounts</button>
+      <button class="settings-tab" onclick="switchSettingsTab('import')" data-tab="import">Import</button>
+    </div>
+
+    <!-- ── General Tab ── -->
+    <div class="settings-tab-pane active" data-tab-pane="general">
+
     <div class="settings-section">
       <div class="settings-title">Dashboard Layout</div>
       <p class="settings-sub-title">Choose which panels appear on your dashboard and their order. Drag or use arrows to rearrange.</p>
@@ -408,6 +417,32 @@
         <button class="btn btn-ghost btn-sm" onclick="resetDashboardLayout()">Reset to Default</button>
       </div>
     </div>
+
+    <div class="settings-section" id="budget-panel">
+      <div class="settings-title">Monthly Budgets</div>
+      <p class="settings-sub-title">Set spending limits per category. Progress bars appear on the dashboard.</p>
+      <div id="budget-list" style="margin-bottom:14px"></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <select id="budget-cat" style="flex:1;min-width:160px"><option value="">Select category…</option></select>
+        <input type="number" id="budget-amt" placeholder="$" style="width:100px" min="1">
+        <button class="btn btn-sm" onclick="saveBudget()">Set Budget</button>
+      </div>
+    </div>
+
+    <div class="settings-section">
+      <div class="settings-title">Backup &amp; Restore</div>
+      <p class="settings-sub-title">Download your database as a backup, or restore from a previous backup file.</p>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        <button class="btn btn-sm" onclick="downloadBackup()">⬇ Download Backup</button>
+        <button class="btn btn-ghost btn-sm" onclick="document.getElementById('restore-input').click()">⬆ Restore from Backup</button>
+        <input type="file" id="restore-input" accept=".db" style="display:none" onchange="restoreBackup(this.files[0])">
+      </div>
+    </div>
+
+    </div><!-- /general tab -->
+
+    <!-- ── Categories Tab ── -->
+    <div class="settings-tab-pane" data-tab-pane="categories">
 
     <div class="settings-section">
       <div class="settings-title">Categories</div>
@@ -431,29 +466,6 @@
       </div>
     </div>
 
-    <div class="settings-section" id="budget-panel">
-      <div class="settings-title">Monthly Budgets</div>
-      <p class="settings-sub-title">Set spending limits per category. Progress bars appear on the dashboard.</p>
-      <div id="budget-list" style="margin-bottom:14px"></div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap">
-        <select id="budget-cat" style="flex:1;min-width:160px"><option value="">Select category…</option></select>
-        <input type="number" id="budget-amt" placeholder="$" style="width:100px" min="1">
-        <button class="btn btn-sm" onclick="saveBudget()">Set Budget</button>
-      </div>
-    </div>
-
-    <div class="settings-section" id="goals-panel">
-      <div class="settings-title">Savings Goals</div>
-      <p class="settings-sub-title">Track progress toward financial goals. Contribute savings manually.</p>
-      <div id="goals-settings-list" style="margin-bottom:14px"></div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap">
-        <input type="text" id="new-goal-name" placeholder="Goal name" style="flex:1;min-width:120px">
-        <input type="number" id="new-goal-target" placeholder="Target $" style="width:100px" min="1" step="0.01">
-        <input type="text" id="new-goal-icon" placeholder="🎯" style="width:52px;text-align:center" maxlength="2">
-        <button class="btn btn-sm" onclick="addGoal()">Add Goal</button>
-      </div>
-    </div>
-
     <div class="settings-section" id="groups-panel">
       <div class="settings-title">Category Groups</div>
       <p class="settings-sub-title">Organize expense categories into custom groups. Groups appear in the dashboard spending breakdown.</p>
@@ -463,6 +475,17 @@
         <button class="btn btn-sm" onclick="addGroup()">Add Group</button>
       </div>
     </div>
+
+    <div class="settings-section">
+      <div class="settings-title">Learned Merchants</div>
+      <p class="settings-sub-title">Categories you've set manually. Deleted entries revert to auto-categorization.</p>
+      <div id="learned-list"></div>
+    </div>
+
+    </div><!-- /categories tab -->
+
+    <!-- ── Accounts Tab ── -->
+    <div class="settings-tab-pane" data-tab-pane="accounts">
 
     <div class="settings-section" id="accounts-panel">
       <div class="settings-title">Accounts</div>
@@ -479,6 +502,18 @@
         </select>
         <input type="number" id="new-acct-balance" placeholder="Opening $" style="width:100px" step="0.01">
         <button class="btn btn-sm" onclick="addAccount()">Add Account</button>
+      </div>
+    </div>
+
+    <div class="settings-section" id="goals-panel">
+      <div class="settings-title">Savings Goals</div>
+      <p class="settings-sub-title">Track progress toward financial goals. Contribute savings manually.</p>
+      <div id="goals-settings-list" style="margin-bottom:14px"></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <input type="text" id="new-goal-name" placeholder="Goal name" style="flex:1;min-width:120px">
+        <input type="number" id="new-goal-target" placeholder="Target $" style="width:100px" min="1" step="0.01">
+        <input type="text" id="new-goal-icon" placeholder="🎯" style="width:52px;text-align:center" maxlength="2">
+        <button class="btn btn-sm" onclick="addGoal()">Add Goal</button>
       </div>
     </div>
 
@@ -508,11 +543,10 @@
       </div>
     </div>
 
-    <div class="settings-section">
-      <div class="settings-title">Learned Merchants</div>
-      <p class="settings-sub-title">Categories you've set manually. Deleted entries revert to auto-categorization.</p>
-      <div id="learned-list"></div>
-    </div>
+    </div><!-- /accounts tab -->
+
+    <!-- ── Import Tab ── -->
+    <div class="settings-tab-pane" data-tab-pane="import">
 
     <div class="settings-section">
       <div class="settings-title" style="display:flex;align-items:center;justify-content:space-between">
@@ -531,15 +565,7 @@
       <div id="rules-list"></div>
     </div>
 
-    <div class="settings-section">
-      <div class="settings-title">Backup &amp; Restore</div>
-      <p class="settings-sub-title">Download your database as a backup, or restore from a previous backup file.</p>
-      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-        <button class="btn btn-sm" onclick="downloadBackup()">⬇ Download Backup</button>
-        <button class="btn btn-ghost btn-sm" onclick="document.getElementById('restore-input').click()">⬆ Restore from Backup</button>
-        <input type="file" id="restore-input" accept=".db" style="display:none" onchange="restoreBackup(this.files[0])">
-      </div>
-    </div>
+    </div><!-- /import tab -->
 
   </div>
 </section>
@@ -572,13 +598,7 @@
         <input type="number" id="f-amount" step="0.01" min="0" placeholder="0.00">
       </div>
       <div class="form-group"><label>Account</label>
-        <select id="f-account">
-          <option>Tangerine Credit Card</option><option>Tangerine Chequing</option>
-          <option>Wealthsimple Chequing</option><option>RBC Chequing</option>
-          <option>TD Chequing</option><option>CIBC Chequing</option>
-          <option>Scotiabank</option><option>BMO Chequing</option>
-          <option>National Bank</option><option>Cash</option><option>Other</option>
-        </select>
+        <select id="f-account"></select>
       </div>
       <div class="form-group full"><label>Notes (optional)</label>
         <input type="text" id="f-notes" placeholder="e.g. March car payment to Dad">
@@ -609,13 +629,7 @@
         <input type="number" id="e-amount" step="0.01" min="0">
       </div>
       <div class="form-group"><label>Account</label>
-        <select id="e-account">
-          <option>Tangerine Credit Card</option><option>Tangerine Chequing</option>
-          <option>Wealthsimple Chequing</option><option>RBC Chequing</option>
-          <option>TD Chequing</option><option>CIBC Chequing</option>
-          <option>Scotiabank</option><option>BMO Chequing</option>
-          <option>National Bank</option><option>Cash</option><option>Other</option>
-        </select>
+        <select id="e-account"></select>
       </div>
       <div class="form-group full"><label>Notes</label><input type="text" id="e-notes"></div>
     </div>
@@ -820,6 +834,36 @@
   </div>
 </div>
 
+<!-- UNIFIED EXPORT -->
+<div class="modal-backdrop" id="export-modal">
+  <div class="modal" style="width:400px">
+    <div class="modal-title">Export Data</div>
+    <div class="form-group" style="margin-bottom:14px">
+      <label>Format</label>
+      <select id="export-format" onchange="onExportFormatChange()">
+        <option value="csv">CSV (Spreadsheet)</option>
+        <option value="pdf">PDF Report</option>
+      </select>
+    </div>
+    <div class="form-group" style="margin-bottom:14px">
+      <label>Scope</label>
+      <select id="export-scope">
+        <option value="month">Current Month</option>
+        <option value="all">All Transactions</option>
+      </select>
+    </div>
+    <div class="form-group" style="margin-bottom:14px;display:none" id="export-pdf-options">
+      <label style="display:flex;align-items:center;gap:8px;text-transform:none;letter-spacing:0;font-size:13px;color:var(--text);cursor:pointer">
+        <input type="checkbox" id="export-include-txns"> Include full transaction list
+      </label>
+    </div>
+    <div class="form-actions">
+      <button class="btn btn-ghost" onclick="closeModal('export-modal')">Cancel</button>
+      <button class="btn" onclick="doExport()">Export</button>
+    </div>
+  </div>
+</div>
+
 <!-- CONTRIBUTE TO GOAL -->
 <div class="modal-backdrop" id="contribute-modal">
   <div class="modal" style="width:340px">
@@ -864,6 +908,22 @@
   style="display:none;position:fixed;bottom:24px;right:24px;z-index:1000;
   box-shadow:0 4px 20px rgba(0,0,0,0.3);border-radius:var(--radius-sm)"
   onclick="doUndo()">↩ Undo</button>
+
+<!-- Quick Actions Popover (fixed position, outside sidebar overflow) -->
+<div class="quick-actions-popover" id="quick-actions-popover">
+  <button class="quick-action-item" onclick="openAddModal(); closeQuickActions()">
+    <span>➕</span> Add Transaction
+  </button>
+  <button class="quick-action-item" onclick="openTransferModal(); closeQuickActions()">
+    <span>↔️</span> Transfer
+  </button>
+  <button class="quick-action-item" onclick="openExportModal(); closeQuickActions()">
+    <span>📥</span> Export Data
+  </button>
+  <button class="quick-action-item" onclick="nav('import'); closeQuickActions()">
+    <span>📤</span> Import CSV
+  </button>
+</div>
 
 <!-- ── SCRIPTS ───────────────────────────────────────────────────────── -->
 <script src="{{ url_for('static', filename='js/app.js') }}"></script>
